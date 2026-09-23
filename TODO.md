@@ -9,14 +9,16 @@
 
 | 项 | 决定 | 说明 |
 | --- | --- | --- |
-| 前端栈 | **R3F + Vite + three.js + React + TypeScript** | 用户指定并锁定 |
+| 前端栈 | **R3F + Vite + three.js + React + TypeScript + MobX** | 用户指定并锁定 |
 | 实现路线 | **混合实现** | three.js 管底座与资源；光照算法全部自写 shader；另加一个体量很小的原生 WebGL2 原理复现页作加分项 |
 | 职责边界 | 框架负责：场景图与相机、资源与纹理、后处理链、PMREM 与内置阴影。自写：GGX BRDF、PCSS/CSM、Clustered 剔除、SSR ray march、SSGI、降噪 | 评审真正看的是自写部分 |
 | 渲染姿势 | **自建 pass**：自管 `WebGLRenderTarget` 与后处理链，不依赖 EffectComposer 一把梭 | 多光源剔除、deferred、SSGI、降噪都在此姿势下做 |
 | 后端 | 当前 WebGL2。**后端分叉只在 `src/core/renderer/createRenderer.ts` 一处** | 阶段 4 若确定要 compute（VXGI/DDGI/实时 PT），只改这一个文件切 `three/webgpu`，避免「WebGL2 版 + WebGPU 版两套代码」 |
 | 色调映射 | `renderer.toneMapping = NoToneMapping`，后续在 `PostFX` 插槽自写 ACES/AgX 可切换 | 否则会与后处理链重复映射，画面发灰 |
 | DPR | 上限 2 | 移动端瓶颈在带宽 |
-| 状态共享 | 自写极简 store（`src/core/store.ts`），不引状态管理库 | 承载能力档位与 demo 参数 |
+| 状态共享 | **MobX 7**（`mobx` + `mobx-react-lite`）：store 用类 + `makeObservable` 显式注解，组件用 `observer()` 订阅 | 承载能力档位、demo 参数（含 URL 序列化）、性能面板采样 |
+| 状态管理注意 | 注解值必须是 `Annotation` 对象（不接受字符串）；v6 的 `action.bound` 已移除，改用 `actionBound` | 见 README「状态管理」一节 |
+| 每帧数据 | `perfStats` 刻意保持非响应式，由 `perfStore` 按 5Hz 采样成 observable | 否则每帧写 observable 会引发每帧重渲染 |
 | 随机 | 固定 seed（`src/core/utils/random.ts`） | 服务 Playwright 视觉回归的确定性 |
 | 目录组织 | 单包：`src/core`（共享基建）/ `src/demos`（各 demo）/ `src/site`（首页与模板） | monorepo 拆分推迟到 eng-shared |
 
@@ -24,7 +26,8 @@
 
 - **与手册建议的偏差**：手册 3.5 建议「复杂多 pass 页用 vanilla three」。本项目按用户要求统一走 R3F。缓解方式：渲染核心保持与 React 无关的 module/class，React 只负责挂载与 UI，避免 reconciler 与自建多 pass 管线互相打架。
 - **`onBeforeCompile` 脆弱**：依赖 three 内部 chunk 命名，必须锁 three 版本、集中管理注入点、加冒烟测试（手册 3.7）。
-- **构建体积**：当前产物 1.24 MB（gzip 355 kB）。后续用 `manualChunks` 拆出 three，并按需对 demo 做 code-split。
+- **构建体积**：当前产物 1.29 MB（gzip 368 kB，含 MobX）。后续用 `manualChunks` 拆出 three，并按需对 demo 做 code-split。
+- **MobX 7 是新主版本**：注解值必须是 `Annotation` 对象（v6 允许的 `"action.bound"` 字符串写法已失效），绑定动作改用 `actionBound`。新增 store 时不要照抄 v6 示例。
 - **性能归因**：不要只看 `renderer.info`（不含 GPU 时间），需接 `EXT_disjoint_timer_query_webgl2` / WebGPU timestamp-query 自己测每个 pass。
 
 ### 验收命令

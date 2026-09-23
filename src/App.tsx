@@ -1,5 +1,6 @@
+import { observer } from 'mobx-react-lite'
 import { BrowserRouter, Link, NavLink, Route, Routes } from 'react-router-dom'
-import { useCapabilities } from '@/core/capabilities'
+import { capabilitiesStore } from '@/core/capabilities'
 import { DEMOS } from '@/site/demos'
 import { DemoPage } from '@/site/DemoPage'
 import { HomePage } from '@/site/HomePage'
@@ -27,8 +28,8 @@ export function App() {
   )
 }
 
-function SiteHeader() {
-  const caps = useCapabilities()
+const SiteHeader = observer(function SiteHeader() {
+  const caps = capabilitiesStore
   return (
     <header className="app-header">
       <Link className="brand" to="/">
@@ -47,11 +48,9 @@ function SiteHeader() {
       </nav>
       <div className="app-header-meta">
         {/* 文档要求：降级路径必须在页面显式标注当前档位 */}
-        <span className={`badge badge-${caps.backend}`}>
-          {caps.backend === 'webgpu' ? 'WebGPU' : 'WebGL2'}
-        </span>
+        <span className={`badge badge-${caps.backend}`}>{caps.label}</span>
         {caps.webgpuAvailable ? <span className="badge badge-muted">GPU 可用</span> : null}
       </div>
     </header>
   )
-}
+})

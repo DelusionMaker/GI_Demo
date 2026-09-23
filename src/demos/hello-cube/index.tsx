@@ -1,4 +1,5 @@
 import { useFrame } from '@react-three/fiber'
+import { observer } from 'mobx-react-lite'
 import { useRef } from 'react'
 import * as THREE from 'three'
 import { CAMERA_HELP, CameraRig, type CameraPreset } from '@/core/camera/CameraRig'
@@ -9,7 +10,6 @@ import { PerfPanel } from '@/core/perf/PerfPanel'
 import { CanvasRoot } from '@/core/renderer/CanvasRoot'
 import { SceneAsset } from '@/core/scene/SceneAsset'
 import type { SceneId } from '@/core/scene/scenes'
-import { useStore } from '@/core/store'
 import type { DemoModule } from '../types'
 
 type DebugView = 'shaded' | 'normals' | 'wireframe'
@@ -31,7 +31,6 @@ const DEBUG_OPTIONS: SelectOption<DebugView>[] = [
   { value: 'wireframe', label: '线框' },
 ]
 
-/** 参数状态：与 URL query 双向同步，链接可直接分享复现 */
 type DemoParams = {
   speed: number
   roughness: number
@@ -51,11 +50,12 @@ const DEFAULTS: DemoParams = {
   autopilot: false,
 }
 
+/** 参数状态：MobX store，与 URL query 双向同步，链接可直接分享复现 */
 const store = createDemoStore(DEFAULTS)
 
 /** 着色探针物体：后续把材质换成自写 BRDF，调试视图切它的中间量 */
-function ShadingProbe() {
-  const { speed, roughness, metalness, debug } = useStore(store)
+const ShadingProbe = observer(function ShadingProbe() {
+  const { speed, roughness, metalness, debug } = store.params
   const ref = useRef<THREE.Mesh>(null)
 
   useFrame((_, delta) => {
@@ -74,20 +74,19 @@ function ShadingProbe() {
       )}
     </mesh>
   )
-}
+})
 
-function DemoScene() {
-  const { scene } = useStore(store)
+const DemoScene = observer(function DemoScene() {
   return (
     <group>
-      <SceneAsset id={scene} />
+      <SceneAsset id={store.params.scene} />
       <ShadingProbe />
     </group>
   )
-}
+})
 
-function DemoControls() {
-  const state = useStore(store)
+const DemoControls = observer(function DemoControls() {
+  const { speed, roughness, metalness, scene, debug, autopilot } = store.params
   return (
     <Panel title="参数" onReset={() => store.reset()}>
       <Slider
@@ -95,46 +94,46 @@ function DemoControls() {
         min={0}
         max={3}
         step={0.05}
-        value={state.speed}
+        value={speed}
         onChange={(value) => store.set({ speed: value })}
       />
       <Slider
         label="粗糙度"
         min={0.02}
         max={1}
-        value={state.roughness}
+        value={roughness}
         onChange={(value) => store.set({ roughness: value })}
       />
       <Slider
         label="金属度"
         min={0}
         max={1}
-        value={state.metalness}
+        value={metalness}
         onChange={(value) => store.set({ metalness: value })}
       />
       <Select
         label="场景"
-        value={state.scene}
+        value={scene}
         options={SCENE_OPTIONS}
         onChange={(value) => store.set({ scene: value })}
       />
       <Select
         label="调试视图"
-        value={state.debug}
+        value={debug}
         options={DEBUG_OPTIONS}
         onChange={(value) => store.set({ debug: value })}
       />
       <Toggle
         label="自动巡航"
-        value={state.autopilot}
+        value={autopilot}
         onChange={(value) => store.set({ autopilot: value })}
       />
     </Panel>
   )
-}
+})
 
-function Stage() {
-  const { autopilot } = useStore(store)
+const Stage = observer(function Stage() {
+  const { autopilot } = store.params
   return (
     <div className="stage">
       <CanvasRoot shadows cameraPosition={PRESETS[0].position}>
@@ -156,15 +155,13 @@ function Stage() {
       </CanvasRoot>
 
       <Hud
-        topLeft={
-          <HudTitle title="hello-cube" subtitle="p0-base 冒烟测试：验证骨架全链路" />
-        }
+        topLeft={<HudTitle title="hello-cube" subtitle="p0-base 冒烟测试：验证骨架全链路" />}
         topRight={<PerfPanel />}
         bottomLeft={<DemoControls />}
         bottomRight={<HudHint>{CAMERA_HELP}</HudHint>}
       />
     </div>
   )
-}
+})
 
 export const helloCubeDemo: DemoModule = { Stage }

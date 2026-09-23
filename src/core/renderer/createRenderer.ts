@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { capabilitiesStore, readCapabilities } from '../capabilities'
+import { capabilitiesStore } from '../capabilities'
 
 /**
  * 渲染器工厂 —— 全项目「后端」唯一分叉点。
@@ -35,7 +35,7 @@ export function createRenderer(input: RendererFactoryInput): THREE.WebGLRenderer
   renderer.outputColorSpace = THREE.SRGBColorSpace
   renderer.toneMapping = THREE.NoToneMapping
 
-  capabilitiesStore.set(readCapabilities(renderer))
+  capabilitiesStore.detect(renderer)
 
   return renderer
 }

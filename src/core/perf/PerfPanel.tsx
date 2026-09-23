@@ -1,54 +1,38 @@
-import { useEffect, useRef } from 'react'
-import { useCapabilities } from '../capabilities'
-import { perfStats } from './perfStats'
-
-const REFRESH_MS = 200
+import { observer } from 'mobx-react-lite'
+import { useEffect } from 'react'
+import { capabilitiesStore } from '../capabilities'
+import { perfStore } from './perfStore'
 
 /**
  * 性能面板（文档「每个 demo 必备八块内容」第 6 条）。
- * 用 rAF 节流直接写 DOM，绕过 React 更新 —— 面板本身不允许影响被测对象。
+ * 数据源是 PerfStore（5Hz 采样），因此这里可以写成普通 observer 组件 ——
+ * 每帧采集发生在画布内的 PerfProbe，不会引发这里的重渲染。
  */
-export function PerfPanel() {
-  const caps = useCapabilities()
-  const fpsRef = useRef<HTMLSpanElement>(null)
-  const frameRef = useRef<HTMLSpanElement>(null)
-  const drawRef = useRef<HTMLSpanElement>(null)
-  const triRef = useRef<HTMLSpanElement>(null)
-  const dprRef = useRef<HTMLSpanElement>(null)
-
+export const PerfPanel = observer(function PerfPanel() {
   useEffect(() => {
-    let raf = 0
-    let last = 0
-    const tick = (now: number) => {
-      raf = requestAnimationFrame(tick)
-      if (now - last < REFRESH_MS) return
-      last = now
-      const set = (el: HTMLSpanElement | null, text: string) => {
-        if (el && el.textContent !== text) el.textContent = text
-      }
-      set(fpsRef.current, perfStats.fps.toFixed(0))
-      set(frameRef.current, `${perfStats.frameMs.toFixed(1)} ms`)
-      set(drawRef.current, String(perfStats.drawCalls))
-      set(triRef.current, formatCount(perfStats.triangles))
-      set(dprRef.current, `×${perfStats.dpr.toFixed(2)}`)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
+    perfStore.startSampling()
+    return () => perfStore.stopSampling()
   }, [])
+
+  const caps = capabilitiesStore
 
   return (
     <div className="panel perf-panel">
       <div className="panel-head">
         <span className="panel-title">性能</span>
-        <span className={`badge badge-${caps.backend}`}>{caps.backend === 'webgpu' ? 'WebGPU' : 'WebGL2'}</span>
+        <span className={`badge badge-${caps.backend}`}>{caps.label}</span>
       </div>
       <div className="perf-grid">
-        <Metric label="FPS" valueRef={fpsRef} />
-        <Metric label="帧时间" valueRef={frameRef} />
-        <Metric label="Draw call" valueRef={drawRef} />
-        <Metric label="三角形" valueRef={triRef} />
-        <Metric label="DPR" valueRef={dprRef} />
-        <Metric label="GPU 时间" value="—" hint="待接计时扩展" />
+        <Metric label="FPS" value={perfStore.fps.toFixed(0)} />
+        <Metric label="帧时间" value={`${perfStore.frameMs.toFixed(1)} ms`} />
+        <Metric label="Draw call" value={String(perfStore.drawCalls)} />
+        <Metric label="三角形" value={formatCount(perfStore.triangles)} />
+        <Metric label="DPR" value={`×${perfStore.dpr.toFixed(2)}`} />
+        <Metric
+          label="GPU 时间"
+          value={perfStore.gpuMs === null ? '—' : `${perfStore.gpuMs.toFixed(2)} ms`}
+          hint={perfStore.gpuMs === null ? '待接计时扩展' : undefined}
+        />
       </div>
       <div className="panel-note">
         浮点 RT {caps.colorBufferFloat ? '✓' : '✗'} · 浮点线性过滤{' '}
@@ -56,24 +40,14 @@ export function PerfPanel() {
       </div>
     </div>
   )
-}
+})
 
-function Metric({
-  label,
-  value,
-  valueRef,
-  hint,
-}: {
-  label: string
-  value?: string
-  valueRef?: React.RefObject<HTMLSpanElement | null>
-  hint?: string
-}) {
+function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="perf-metric">
       <span className="perf-key">{label}</span>
-      <span className="perf-val" ref={valueRef} title={hint}>
-        {value ?? '0'}
+      <span className="perf-val" title={hint}>
+        {value}
       </span>
     </div>
   )
