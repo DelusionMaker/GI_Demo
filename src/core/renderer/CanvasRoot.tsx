@@ -1,7 +1,8 @@
 import { Canvas } from '@react-three/fiber'
 import type { ReactNode } from 'react'
-import { PerfProbe } from '../perf/PerfProbe'
 import { createRenderer } from './createRenderer'
+import { PerfProbe } from '../perf/PerfProbe'
+import { PostFX } from './PostFX'
 
 export interface CanvasRootProps {
   children: ReactNode
@@ -33,8 +34,10 @@ export function CanvasRoot({
       camera={{ position: cameraPosition, fov, near: 0.05, far: 500 }}
       gl={createRenderer}
     >
-      <PerfProbe />
-      {children}
+      <PostFX>
+        <PerfProbe />
+        {children}
+      </PostFX>
     </Canvas>
   )
 }

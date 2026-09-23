@@ -1,18 +1,27 @@
 import type { ReactNode } from 'react'
+import { HDRDriver } from '../postfx/HDRDriver'
 
 /**
- * 后处理链的插槽（p0-hdr 落地点）。
+ * 后处理链的插槽（p0-hdr 落地点）。必须渲染在 <Canvas> 内部。
  *
- * 目前是直通（pass-through），后续按 p0-hdr / p0-gbuffer-hud 依次接入：
- *   1. HDR 渲染目标：把场景渲到 RGBA16F，而不是默认的 8bit 后缓冲
- *      （需要 capabilities.colorBufferFloat；WebGL2 下用 EXT_color_buffer_float）
- *   2. 自写色调映射：ACES / AgX / Reinhard 可切换 + 曲线图（约 30 行 shader）
- *   3. 自动曝光：亮度直方图回读（readPixels 异步回读，避免 stall）+ EV 语义
- *   4. 物理 bloom：mip 链下采样 + 上采样
+ * 当前链（p0-hdr 步骤 1）：
+ *   HDRDriver：场景 → RGBA16F HDR RT（含 DepthTexture / MSAA）
+ *   → 全屏曝光直通 pass（手写线性→sRGB 编码）→ canvas
  *
- * 注意：接入手写色调映射后，必须保持 renderer.toneMapping = NoToneMapping，
+ * 后续按 p0-hdr / p0-gbuffer-hud 依次插入：
+ *   2. 自写色调映射：ACES / AgX / Reinhard 可切换 + 曲线图
+ *   3. 物理 bloom：半分辨率 mip 链下采样再上采样
+ *   4. 自动曝光：亮度 mip 测光 + 跨帧异步回读 + EV 语义
+ *
+ * 注意：HDRDriver 以 renderPriority=1 接管了 R3F 自动渲染，
+ * 且依赖 createRenderer 中 toneMapping = NoToneMapping，
  * 否则会和后处理链重复做一次映射（画面发灰的常见原因）。
  */
 export function PostFX({ children }: { children?: ReactNode }) {
-  return <>{children}</>
+  return (
+    <>
+      {children}
+      <HDRDriver />
+    </>
+  )
 }
