@@ -1,0 +1,15 @@
+node_modules
+dist
+dist-ssr
+*.local
+.vite
+
+# 烘焙产物 / 本地缓存（可复现的产物由脚本重新生成，不直接入库）
+.cache
+bake-out
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store

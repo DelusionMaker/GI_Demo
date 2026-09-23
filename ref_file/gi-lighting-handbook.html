@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>光照与全局光照 · 理论体系 + 作品集规划 + 技术栈选型</title>
+<style>
+:root{--accent:#2f6bff;--accent-soft:#eaf1ff;--ink:#1b1f26;--ink-2:#4a5260;--ink-3:#77808f;
+--line:#e4e8ef;--bg:#ffffff;--surface:#f7f9fc;--warn:#b3541e;--warn-bg:#fff4ec;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.75}
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px 80px}
+header{padding:56px 0 24px;border-bottom:1px solid var(--line)}
+h1{font-size:28px;font-weight:600;margin:0 0 8px}
+.sub{color:var(--ink-2);margin:0;max-width:820px}
+nav{position:sticky;top:0;background:rgba(255,255,255,.95);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);z-index:10;padding:10px 0;display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+nav a{color:var(--ink-2);text-decoration:none}
+nav a:hover{color:var(--accent)}
+h2{font-size:21px;font-weight:600;margin:48px 0 6px;padding-top:8px;border-top:1px solid var(--line)}
+h2:first-of-type{border-top:none}
+h3{font-size:15px;font-weight:600;margin:26px 0 4px}
+h4{font-size:14px;font-weight:600;margin:14px 0 4px}
+p{margin:6px 0}
+p.lead{color:var(--ink-2);max-width:880px}
+table{width:100%;border-collapse:collapse;margin:12px 0 8px;font-size:13px}
+th{text-align:left;background:var(--surface);color:var(--ink-2);font-weight:600;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top}
+td.name{font-weight:600;white-space:nowrap}
+.muted{color:var(--ink-3)}
+tr:hover td{background:#fbfcfe}
+.pill{display:inline-block;font-size:12px;border-radius:6px;padding:1px 7px;border:1px solid var(--line);color:var(--ink-2);white-space:nowrap}
+.pill.rt{border-color:#bcd0ff;color:var(--accent);background:var(--accent-soft)}
+.pill.bake{border-color:#f0cfa8;color:var(--warn);background:var(--warn-bg)}
+.pill.mix{border-color:#cfd8e6;color:var(--ink-2);background:var(--surface)}
+.note{background:var(--warn-bg);border-left:3px solid var(--warn);padding:12px 16px;border-radius:0 8px 8px 0;color:#6b4a2c;margin:16px 0}
+.note.blue{background:var(--accent-soft);border-left-color:var(--accent);color:#25406e}
+ul,ol{margin:8px 0;padding-left:22px}
+li{margin:3px 0}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-top:14px}
+.card{border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.card p{color:var(--ink-2);font-size:13px;margin:0}
+.eq{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--surface);border-radius:8px;padding:10px 14px;font-size:13px;margin:10px 0;overflow-x:auto}
+svg{max-width:100%;height:auto;display:block;margin:16px 0}
+svg text{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.t{font-size:14px;fill:#1b1f26}
+.ts{font-size:12px;fill:#4a5260}
+.th{font-size:14px;font-weight:600;fill:#1b1f26}
+.lab{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;margin-top:12px}
+.lab canvas{background:#f7f9fc;border-radius:12px;flex:0 0 auto}
+.lab .ctl{flex:1;min-width:300px}
+.row{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.row label{font-size:13px;color:var(--ink-2);min-width:70px}
+.row input[type=range]{flex:1}
+.row span{font-size:13px;color:var(--ink-2);min-width:38px;text-align:right}
+.row select{flex:1;padding:4px 8px;border:1px solid var(--line);border-radius:6px;font-size:13px}
+.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:12px}
+.metric{background:var(--surface);border-radius:8px;padding:10px 12px}
+.metric .k{font-size:12px;color:var(--ink-3)}
+.metric .v{font-size:22px;font-weight:600;color:var(--accent)}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);color:var(--ink-3);font-size:13px}
+@media(max-width:760px){table{font-size:12px}th,td{padding:8px 6px}.wrap{padding:0 14px 60px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+<h1>光照与全局光照（GI）· 完整整理</h1>
+<p class="sub">三轮对话的合并文档：第一部分是理论体系（局部/全局光照、渲染方程与 BRDF、GI 技术对比、视觉现象成因）；第二部分是 Web 端技术作品集的方向清单与排期；第三部分是「用框架还是手写」的技术栈选型结论。含交互式着色实验台与全部示意图。</p>
+</header>
+
+<nav>
+<a href="#s0">一页速览</a><a href="#p1">一 理论体系</a><a href="#p2">二 作品集规划</a><a href="#p3">三 技术栈选型</a>
+</nav>
+
+<h2 id="s0">一页速览</h2>
+<ul>
+<li><strong>局部光照与全局光照的唯一分界：</strong>局部光照把 Li 当成常数 Ka 假装掉；全局光照承认 Li 是别处的 Lo，于是所有点被同一个方程耦合，必须联立求解。</li>
+<li><strong>渲染方程：</strong>Lo(x,ωo) = Le(x,ωo) + ∫Ω fr(x,ωi→ωo)·Li(x,ωi)·(n·ωi) dωi。四项分别回答：自发光、材质分配、来了多少光、投影面积。</li>
+<li><strong>三大经典模型是同一个积分的不同近似：</strong>Lambert 取常数 fr = ρ/π；Phong 用 (r·v)^p 围绕反射方向；Blinn-Phong 用 (n·h)^p 围绕半程向量，更省算力且掠射角不失真。</li>
+<li><strong>技术选型一句话：</strong>离线求正确选路径追踪（+NEE/MIS），焦散补光子映射，实时求帧率先烘焙兜底再上 SSGI，深水区（VXGI/DDGI/PT）必须 WebGPU。</li>
+<li><strong>作品集主线（6 个）：</strong>HDR 底座 → PBR+IBL → 阴影全家桶 → 烘焙 lightmap/SH 探针 → GTAO/SSGI → 深水区四选一。14–20 周。</li>
+<li><strong>实现姿势：</strong>three.js 管底座与资源，光照算法全部自写 shader，另加一个小的原生 WebGL2 原理复现页作为加分项。混合路线层级一 2–3 周，全手写 5–6 周，全用内置约 5 天。</li>
+</ul>
+
+<h2 id="p1">第一部分 · 理论体系</h2>
+
+<h3>1.1 局部光照 vs 全局光照，直接光 vs 间接光</h3>
+<p class="lead">光到达着色点走了几步路，这一条变量就把两者彻底分开。</p>
+<svg viewBox="0 0 680 340" width="100%" role="img">
+<title>光的三种到达路径</title>
+<desc>同一房间剖面中对比直接光照、一次间接光照与多次间接光照的光路</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="40" y="70" width="180" height="180" rx="10" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+<path d="M130 70 L130 85" fill="none" stroke="#888780" stroke-width="0.5"/>
+<circle cx="130" cy="92" r="7" fill="#EF9F27" stroke="#854F0B" stroke-width="0.5"/>
+<circle cx="158" cy="218" r="20" fill="#9FE1CB" stroke="#0F6E56" stroke-width="0.5"/>
+<path d="M130 99 L153 198" fill="none" stroke="#BA7517" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text class="th" x="130" y="278" text-anchor="middle">直接光照</text>
+<text class="ts" x="130" y="296" text-anchor="middle">光源到表面，零次反弹</text>
+<text class="ts" x="130" y="313" text-anchor="middle">局部光照即可求得</text>
+<rect x="245" y="70" width="180" height="180" rx="10" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+<path d="M335 70 L335 85" fill="none" stroke="#888780" stroke-width="0.5"/>
+<circle cx="335" cy="92" r="7" fill="#EF9F27" stroke="#854F0B" stroke-width="0.5"/>
+<circle cx="363" cy="218" r="20" fill="#9FE1CB" stroke="#0F6E56" stroke-width="0.5"/>
+<polyline points="335,99 245,150 345.6,208" fill="none" stroke="#BA7517" stroke-width="1.5" marker-end="url(#arrow)"/>
+<circle cx="245" cy="150" r="4" fill="#BA7517"/>
+<text class="th" x="335" y="278" text-anchor="middle">一次间接光照</text>
+<text class="ts" x="335" y="296" text-anchor="middle">经一个表面反弹后到达</text>
+<text class="ts" x="335" y="313" text-anchor="middle">GI 能量的主要部分</text>
+<rect x="450" y="70" width="180" height="180" rx="10" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+<path d="M540 70 L540 85" fill="none" stroke="#888780" stroke-width="0.5"/>
+<circle cx="540" cy="92" r="7" fill="#EF9F27" stroke="#854F0B" stroke-width="0.5"/>
+<circle cx="568" cy="218" r="20" fill="#9FE1CB" stroke="#0F6E56" stroke-width="0.5"/>
+<polyline points="540,99 450,120 480,244 548.8,223.7" fill="none" stroke="#BA7517" stroke-width="1.5" marker-end="url(#arrow)"/>
+<circle cx="450" cy="120" r="4" fill="#BA7517"/><circle cx="480" cy="244" r="4" fill="#BA7517"/>
+<text class="th" x="540" y="278" text-anchor="middle">多次间接光照</text>
+<text class="ts" x="540" y="296" text-anchor="middle">两次以上弹射后到达</text>
+<text class="ts" x="540" y="313" text-anchor="middle">决定环境光与色彩渗透</text>
+</svg>
+<table>
+<thead><tr><th>维度</th><th>局部光照 Local Illumination</th><th>全局光照 Global Illumination</th></tr></thead>
+<tbody>
+<tr><td class="name">求解对象</td><td>每个着色点独立求解：只依赖该点法线、材质、光源与相机方向</td><td>整个场景联立求解：任一点的颜色依赖所有其他表面</td></tr>
+<tr><td class="name">数学形式</td><td>代数式求和（环境 + 漫反射 + 镜面）</td><td>第二类 Fredholm 积分方程，Lo = Le + T·L 自耦合</td></tr>
+<tr><td class="name">表面角色</td><td>表面只是接收者</td><td>每个表面同时是接收者与光源（被照亮的墙成为面光源）</td></tr>
+<tr><td class="name">能产生的现象</td><td>直接光、硬阴影、镜面高光。暗部只能靠常数环境项假装</td><td>软阴影、色彩溢出、接触阴影、焦散、暗部层次</td></tr>
+<tr><td class="name">成本</td><td>O(1) 每像素，可并行，天然实时</td><td>高维积分，离线用蒙特卡洛，实时用缓存/近似/降噪</td></tr>
+</tbody>
+</table>
+
+<h3>1.2 渲染方程与 BRDF</h3>
+<div class="eq">Lo(x, ωo) = Le(x, ωo) + ∫<sub>Ω</sub> fr(x, ωi→ωo) · Li(x, ωi) · (n·ωi) dωi</div>
+<svg viewBox="0 0 680 404" width="100%" role="img">
+<title>渲染方程与其各项含义</title>
+<desc>左侧为半球积分几何示意，右侧为方程各项的解释</desc>
+<defs><marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<text class="th" x="40" y="40">半球积分几何</text>
+<path d="M80 300 A100 100 0 0 0 280 300 Z" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<path d="M60 300 L300 300" fill="none" stroke="#888780" stroke-width="0.5"/>
+<path d="M160 300 L200 300" fill="none" stroke="#185FA5" stroke-width="3"/>
+<circle cx="180" cy="300" r="4" fill="#534AB7"/>
+<path d="M180 300 L180 200" fill="none" stroke="#534AB7" stroke-width="1.5" marker-end="url(#arrow2)"/>
+<path d="M115 220 L180 300" fill="none" stroke="#BA7517" stroke-width="1.5" marker-end="url(#arrow2)"/>
+<path d="M180 300 L250 215" fill="none" stroke="#BA7517" stroke-width="1.5" marker-end="url(#arrow2)"/>
+<path d="M180 256 A44 44 0 0 0 152 266" fill="none" stroke="#534AB7" stroke-width="0.5"/>
+<text class="ts" x="190" y="212">n</text><text class="ts" x="98" y="216">ωi</text><text class="ts" x="256" y="212">ωo</text>
+<text class="ts" x="146" y="284" text-anchor="end">θi</text>
+<text class="ts" x="104" y="252">Ω 半球积分域</text>
+<text class="ts" x="60" y="322">着色点 x 收到来自整个半球的入射光</text>
+<text class="th" x="340" y="40">四个因子各回答什么</text>
+<rect x="340" y="54" width="56" height="26" rx="6" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="368" y="67" text-anchor="middle" dominant-baseline="central" style="font-family:ui-monospace,monospace;font-size:12px;fill:#0C447C">Le</text>
+<text class="th" x="410" y="66">自发光项</text><text class="ts" x="410" y="84">表面自身辐射，除光源外多为 0</text>
+<rect x="340" y="100" width="56" height="26" rx="6" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="368" y="113" text-anchor="middle" dominant-baseline="central" style="font-family:ui-monospace,monospace;font-size:12px;fill:#0C447C">Li</text>
+<text class="th" x="410" y="112">入射辐射亮度</text><text class="ts" x="410" y="130">在 GI 中它来自别处的 Lo</text>
+<rect x="340" y="146" width="56" height="26" rx="6" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="368" y="159" text-anchor="middle" dominant-baseline="central" style="font-family:ui-monospace,monospace;font-size:12px;fill:#3C3489">fr</text>
+<text class="th" x="410" y="158">BRDF</text><text class="ts" x="410" y="176">材质对出入射方向的能量分配比</text>
+<rect x="340" y="192" width="56" height="26" rx="6" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="368" y="205" text-anchor="middle" dominant-baseline="central" style="font-family:ui-monospace,monospace;font-size:12px;fill:#3C3489">n·ωi</text>
+<text class="th" x="410" y="204">余弦因子 cos θi</text><text class="ts" x="410" y="222">斜射时单位面积接收能量摊薄</text>
+<rect x="340" y="238" width="56" height="26" rx="6" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="368" y="251" text-anchor="middle" dominant-baseline="central" style="font-family:ui-monospace,monospace;font-size:12px;fill:#0C447C">∫Ω</text>
+<text class="th" x="410" y="250">半球积分</text><text class="ts" x="410" y="268">对所有入射方向累加求和</text>
+<rect x="40" y="340" width="600" height="44" rx="10" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text class="th" x="60" y="362" dominant-baseline="central">全局性的根源：Li 本身就是别处的 Lo，方程自耦合</text>
+<text class="ts" x="60" y="378" dominant-baseline="central">全场景必须联立求解，任一点的颜色都依赖整个场景</text>
+</svg>
+<p><strong>BRDF 的三条性质：</strong>非负性；亥姆霍兹互易 fr(ωi→ωo) = fr(ωo→ωi)；能量守恒（半球积分 ≤ 1）。违反任一条，渲染结果在物理上就不成立。</p>
+
+<h3>1.3 三种经典光照模型</h3>
+<table>
+<thead><tr><th>模型</th><th>公式</th><th>几何含义</th><th>优点</th><th>局限</th></tr></thead>
+<tbody>
+<tr><td class="name">Lambert</td><td>fr = ρ/π；L = kd·ρ·(n·l)</td><td>余弦瓣，各方向均匀散射</td><td>最省、符合理想漫反射</td><td>与视角无关，无法表达任何光泽</td></tr>
+<tr><td class="name">Phong</td><td>spec = ks·(r·v)^p，r 为反射方向</td><td>镜面瓣围绕反射方向 r</td><td>高光直观、实现简单</td><td>需逐点求反射向量；掠射角处 n·l 趋于 0 时高光失真</td></tr>
+<tr><td class="name">Blinn-Phong</td><td>spec = ks·(n·h)^p，h = normalize(l+v)</td><td>镜面瓣围绕半程向量 h</td><td>更省算力；掠射角不失真</td><td>指数需 ×4 才与 Phong 视觉对齐；仍非能量守恒</td></tr>
+</tbody>
+</table>
+<div class="note"><strong>三个易踩的坑：</strong>①Ka + Kd + Ks 常常 &gt; 1，经典 Phong 本身不守恒，要物理正确应走 Cook-Torrance/GGX，或在 Ks 前加 (p+2)/(2π) 这类归一化因子；②Blinn-Phong 的指数要 ×4 才能与 Phong 对齐，否则两者混用时高光大小不一致；③p→∞ 并不等价于 GGX 的 α→0，前者是无限收窄的能量黑洞，后者仍受 Smith 遮蔽与菲涅耳约束。粗糙度与 Phong 指数的换算为 α = √(2/(p+2))。</div>
+
+<h3>1.4 交互式着色实验台</h3>
+<p class="lead">per-pixel 光线求交实时计算，可切换三种模型并观察三项能量的占比。把 Ks 拉到 1.5 以上，镜面项会吞掉漫反射能量——这正是"看起来很塑料"的量化解释。</p>
+<div class="lab">
+<canvas id="cv" width="290" height="250"></canvas>
+<div class="ctl">
+<div class="row"><label>模型</label><select id="model"><option value="lambert">Lambert</option><option value="phong">Phong</option><option value="blinn" selected>Blinn-Phong</option></select></div>
+<div class="row"><label>Ka 环境</label><input id="ka" type="range" min="0" max="0.6" step="0.01" value="0.12"><span id="kav">0.12</span></div>
+<div class="row"><label>Kd 漫反射</label><input id="kd" type="range" min="0" max="1" step="0.01" value="0.85"><span id="kdv">0.85</span></div>
+<div class="row"><label>Ks 镜面</label><input id="ks" type="range" min="0" max="2" step="0.01" value="0.7"><span id="ksv">0.70</span></div>
+<div class="row"><label>p 指数</label><input id="sh" type="range" min="1" max="160" step="1" value="48"><span id="shv">48</span></div>
+<div class="row"><label>间接光</label><input id="gi" type="checkbox" checked><span class="muted" style="min-width:0;text-align:left">按法线方向取天空/地面色，模拟一层 GI</span></div>
+<div class="metrics">
+<div class="metric"><div class="k">环境项</div><div class="v" id="pa">0%</div></div>
+<div class="metric"><div class="k">漫反射项</div><div class="v" id="pd">0%</div></div>
+<div class="metric"><div class="k">镜面项</div><div class="v" id="ps">0%</div></div>
+</div>
+<div class="eq" id="fml" style="margin-top:12px">Lo = Ka·ρ + Kd·ρ·(n·l) + Ks·(n·h)^p</div>
+</div>
+</div>
+
+<h3>1.5 主流 GI 技术对比</h3>
+<table>
+<thead><tr><th>技术</th><th>怎么算那个积分</th><th>适用场景</th><th>优点</th><th>致命短板</th></tr></thead>
+<tbody>
+<tr><td class="name">光线追踪<br>（Whitted 递归）</td><td>只沿镜面方向递归分裂，漫反射处套局部模型</td><td>玻璃、金属、水面、精确硬阴影；实时光追的阴影/反射/AO</td><td>天然处理镜面/折射/硬阴影；与几何分辨率无关</td><td>漫反射 GI 完全算不了；本质不是 GI 算法；暗部依赖 ambient 假光</td></tr>
+<tr><td class="name">路径追踪</td><td>蒙特卡洛积分，每 hit 按 BRDF 重要性采样一个方向</td><td>电影离线渲染；任何要求物理正确的场景</td><td>唯一"直接解方程本身"的无偏一致算法；间接漫反射、软阴影、色彩渗透一次全包</td><td>方差大→噪点；收敛 O(1/√N)；小光源、焦散、SDS 路径难收敛</td></tr>
+<tr><td class="name">辐射度<br>Radiosity</td><td>剖分成面片，用形式因子 F_ij 组装线性方程组</td><td>纯漫反射室内照明、建筑采光评估</td><td>视点无关，解一次可任意漫游；完全无噪点；能量守恒严格</td><td>只支持理想漫反射；F 矩阵 O(N²) 计算 + O(N³) 求解；漏光与内存爆炸</td></tr>
+<tr><td class="name">光子映射</td><td>两 pass：光源发光子存 KD-tree，渲染时密度估计反查</td><td>焦散（泳池光斑/透镜聚焦）、需缓存复用的 GI</td><td>焦散是主场（PT 极难）；结果可缓存重复利用</td><td>有偏且不一致；kernel 半径引入偏差；光子不足出现块状/暗角；调参玄学</td></tr>
+<tr><td class="name">环境光遮蔽<br>AO / SSAO</td><td>不做积分，只做半球遮挡可见性检测</td><td>实时游戏、移动端；GI 的廉价代用品</td><td>极便宜；凹角、接触阴影、缝隙变暗；几何体积感立竿见影</td><td>纯伪造，不携带颜色、不做反弹；SSAO 有 halo/漏光/视点抖动</td></tr>
+</tbody>
+</table>
+<p class="muted">实时侧现代谱系：烘焙 lightmap + SH 探针（静态最优解）、体素/SDF DDGI、SSGI（屏幕空间 ray march + 时空累积）、ReSTIR（直接光重要性重采样）。共同点是把 GI 拆成「缓存 + 重用 + 降噪」，用偏差换方差。</p>
+
+<h3>1.6 四种视觉现象的物理与数学成因</h3>
+<table>
+<thead><tr><th>现象</th><th>数学成因</th><th>关键结论</th></tr></thead>
+<tbody>
+<tr><td class="name">阴影</td><td>渲染方程加二值可见性 V(x,ω)：Li 沿该方向能否到达取决于线段是否被挡（shadow ray）</td><td>点光源下 V 非 0 即 1 → 硬阴影；面光源要对光源面积积分，部分可见产生半影，半影宽度 ≈ 遮挡物到受影面距离 × 光源张角。shadow map 只是用 depth 比较粗暴替代该积分，于是才有 acne、peter-panning、bias、cascade 这些补丁</td></tr>
+<tr><td class="name">反射</td><td>理想镜面 BRDF 是狄拉克 δ：fr = ρ·δ(ωo − R(ωi))/cosθi，把积分退化成只沿一个方向</td><td>真实材质用微表面模型 fr = F·D·G / (4(n·i)(n·o))；D 是法线分布（GGX）、G 是 Smith 遮蔽、F 是菲涅耳。粗糙度本质是 µm 尺度几何的统计</td></tr>
+<tr><td class="name">折射</td><td>斯涅尔定律 n₁sinθ₁ = n₂sinθ₂，来自麦克斯韦方程组的界面边界条件（等价 Fermat 最小光程）；能量配比由菲涅耳决定</td><td>向量形式 t = η·l + (ηc − √(1−η²(1−c²)))·n，根号内为负即全内反射，临界角 θc = arcsin(n₂/n₁)。n 随波长变化（色散）导致不同颜色折射角不同 → 彩虹与相机紫边</td></tr>
+<tr><td class="name">色彩溢出</td><td>诺伊曼级数：L = Le + T·L 的解为 L = Σₖ Tᵏ·Le，第 k 项即第 k 次弹射贡献</td><td>因为 ρ&lt;1，∥T∥&lt;1，级数几何收敛；每一项 Tᵏ 都带着上一次碰撞表面的颜色（fr 中的 ρ），红墙于是把反照率乘进后续所有项。这也解释了"每个被照亮的漫反射表面都是一个面光源"</td></tr>
+</tbody>
+</table>
+
+<h2 id="p2">第二部分 · Web 端作品集规划</h2>
+
+<h3>2.1 技术层级地图</h3>
+<svg viewBox="0 0 680 506" width="100%" role="img">
+<title>作品集的技术层级地图</title>
+<desc>四层结构：实时直接光照、烘焙 GI、实时 GI、进阶效果</desc>
+<rect x="40" y="40" width="600" height="84" rx="12" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text class="th" x="60" y="68">层级一 · 实时直接光照</text>
+<text class="ts" x="620" y="68" text-anchor="end">每帧计算 · 无预计算</text>
+<rect x="60" y="86" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/><text class="ts" x="126" y="99" text-anchor="middle" dominant-baseline="central" style="fill:#0C447C">多光源与剔除</text>
+<rect x="202" y="86" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/><text class="ts" x="268" y="99" text-anchor="middle" dominant-baseline="central" style="fill:#0C447C">PBR 与 IBL</text>
+<rect x="344" y="86" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/><text class="ts" x="410" y="99" text-anchor="middle" dominant-baseline="central" style="fill:#0C447C">阴影全家桶</text>
+<rect x="486" y="86" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/><text class="ts" x="552" y="99" text-anchor="middle" dominant-baseline="central" style="fill:#0C447C">屏幕空间反射</text>
+<rect x="40" y="138" width="600" height="84" rx="12" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text class="th" x="60" y="166">层级二 · 烘焙 GI</text>
+<text class="ts" x="620" y="166" text-anchor="end">离线预计算 · 运行时零成本</text>
+<rect x="60" y="184" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#854F0B" stroke-width="0.5"/><text class="ts" x="126" y="197" text-anchor="middle" dominant-baseline="central" style="fill:#633806">光照贴图</text>
+<rect x="202" y="184" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#854F0B" stroke-width="0.5"/><text class="ts" x="268" y="197" text-anchor="middle" dominant-baseline="central" style="fill:#633806">SH 光照探针</text>
+<rect x="344" y="184" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#854F0B" stroke-width="0.5"/><text class="ts" x="410" y="197" text-anchor="middle" dominant-baseline="central" style="fill:#633806">辐照度体积</text>
+<rect x="486" y="184" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#854F0B" stroke-width="0.5"/><text class="ts" x="552" y="197" text-anchor="middle" dominant-baseline="central" style="fill:#633806">离线路径追踪</text>
+<rect x="40" y="236" width="600" height="84" rx="12" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text class="th" x="60" y="264">层级三 · 实时 GI</text>
+<text class="ts" x="620" y="264" text-anchor="end">每帧近似求解 · 依赖缓存与降噪</text>
+<rect x="60" y="282" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/><text class="ts" x="126" y="295" text-anchor="middle" dominant-baseline="central" style="fill:#0C447C">GTAO</text>
+<rect x="202" y="282" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/><text class="ts" x="268" y="295" text-anchor="middle" dominant-baseline="central" style="fill:#0C447C">SSGI</text>
+<rect x="344" y="282" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/><text class="ts" x="410" y="295" text-anchor="middle" dominant-baseline="central" style="fill:#0C447C">VXGI 锥追踪</text>
+<rect x="486" y="282" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/><text class="ts" x="552" y="295" text-anchor="middle" dominant-baseline="central" style="fill:#0C447C">SDF · DDGI</text>
+<rect x="40" y="334" width="600" height="84" rx="12" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+<text class="th" x="60" y="362">层级四 · 进阶效果</text>
+<text class="ts" x="620" y="362" text-anchor="end">材质与介质 · 叠加在光照之上</text>
+<rect x="60" y="380" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="0.5"/><text class="ts" x="126" y="393" text-anchor="middle" dominant-baseline="central" style="fill:#444441">次表面散射</text>
+<rect x="202" y="380" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="0.5"/><text class="ts" x="268" y="393" text-anchor="middle" dominant-baseline="central" style="fill:#444441">体积光与雾</text>
+<rect x="344" y="380" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="0.5"/><text class="ts" x="410" y="393" text-anchor="middle" dominant-baseline="central" style="fill:#444441">焦散</text>
+<rect x="486" y="380" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="0.5"/><text class="ts" x="552" y="393" text-anchor="middle" dominant-baseline="central" style="fill:#444441">折射与色散</text>
+<rect x="40" y="440" width="600" height="46" rx="10" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+<text class="th" x="60" y="458" dominant-baseline="central">建议主线：先做满直接光与阴影 → 烘焙方案兜底 → 再选一条实时 GI 做深</text>
+<text class="ts" x="60" y="476" dominant-baseline="central">贪多会摊薄质量；6 到 8 个 demo 讲透，胜过 20 个半成品</text>
+</svg>
+
+<h3>2.2 方向清单（难度 · 工作量 · 栈 · 实时性）</h3>
+<p class="lead">工作量按「已有 WebGL 基础、每天有效投入 4–6 小时」的工作日估算。完整实现要点与呈现形式见 <code>gi-portfolio-plan.html</code>。</p>
+<h4>层级一 · 实时直接光照</h4>
+<table>
+<thead><tr><th>方向</th><th>核心实现点</th><th>呈现形式</th><th>难度 · 工作量</th><th>栈 · 实时性</th></tr></thead>
+<tbody>
+<tr><td class="name">HDR + 色调映射</td><td>ACES/AgX、自动曝光、物理 bloom</td><td>EV 滑杆、曲线切换、直方图</td><td>中低 · 2–3 天</td><td>WebGL2/WebGPU · 实时</td></tr>
+<tr><td class="name">PBR 直接光</td><td>GGX + Smith + Schlick，能量守恒校验</td><td>材质球 + 滑杆 + BRDF lobe + 白炉测试</td><td>中低 · 2–3 天</td><td>three.js/R3F · 实时</td></tr>
+<tr><td class="name">IBL</td><td>Split-sum + PMREM + BRDF LUT</td><td>HDRI 切换、粗糙度扫过、LUT 可视化</td><td>中 · 3–4 天</td><td>three.js + KTX2 · 实时（贴图离线预处理）</td></tr>
+<tr><td class="name">多光源剔除</td><td>Forward/Deferred/Clustered 三档</td><td>光源数 1→2048 + 帧时间曲线 + 分块热力图</td><td>中 · 4–6 天</td><td>WebGL2 MRT/UBO · 实时</td></tr>
+<tr><td class="name">阴影全家桶</td><td>SM/PCF/PCSS/CSM/VSM + 三种 bias 补偿</td><td>算法切换 + cascade 着色 + 翻车演示</td><td>中 · 5–8 天</td><td>WebGL2 · 实时</td></tr>
+<tr><td class="name">SSR</td><td>ray march + 二分细化 + 时域累积</td><td>与平面/环境反射三方对比 + 失效案例</td><td>中 · 3–5 天</td><td>WebGL2/WebGPU · 实时</td></tr>
+<tr><td class="name">LTC 面光源</td><td>线性变换余弦解析积分多边形光</td><td>光源尺寸变化 → 高光拉伸</td><td>高 · 4–6 天</td><td>three.js RectAreaLight · 实时</td></tr>
+</tbody>
+</table>
+<h4>层级二 · 烘焙 GI</h4>
+<table>
+<thead><tr><th>方向</th><th>核心实现点</th><th>呈现形式</th><th>难度 · 工作量</th><th>栈 · 实时性</th></tr></thead>
+<tbody>
+<tr><td class="name">光照贴图</td><td>UV2 展开 + 烘焙器 + 可选方向性</td><td>烘焙前后开关 + lightmap 通道叠加 + 耗时展示</td><td>中 · 3–6 天</td><td>Blender/自写 + KTX2 · 离线烘焙</td></tr>
+<tr><td class="name">SH 光照探针</td><td>9/25 系数 + 三线性插值</td><td>探针点云 + 动态物体接入 GI 前后对比</td><td>中 · 4–5 天</td><td>自写脚本 + LightProbe · 离线烘焙</td></tr>
+<tr><td class="name">辐照度体积</td><td>3D 纹理 + 梯度修正抗漏光</td><td>切片查看器 + 权重热力图</td><td>中高 · 5–7 天</td><td>TEXTURE_3D/WebGPU · 离线烘焙</td></tr>
+<tr><td class="name">离线 PT 烘焙</td><td>NEE + MIS + 俄罗斯轮盘</td><td>渐进烘焙进度 + 与实时方案误差热力图</td><td>高 · 6–10 天</td><td>WebGPU compute/Node · 离线烘焙</td></tr>
+</tbody>
+</table>
+<h4>层级三 · 实时 GI（只选一条做深）</h4>
+<table>
+<thead><tr><th>方向</th><th>核心实现点</th><th>呈现形式</th><th>难度 · 工作量</th><th>栈 · 实时性</th></tr></thead>
+<tbody>
+<tr><td class="name">GTAO</td><td>水平角积分 + 多次弹射近似</td><td>AO-only 视图 + 与真值误差图</td><td>中 · 3–5 天</td><td>WebGL2 · 实时</td></tr>
+<tr><td class="name">SSGI</td><td>屏幕空间 ray march + 时域累积</td><td>单帧噪点 vs 累积对比 + 屏幕外失效演示</td><td>中高 · 5–8 天</td><td>WebGL2/WebGPU · 实时</td></tr>
+<tr><td class="name">降噪器</td><td>重投影 + 三权重拒绝 + 边缘保持滤波</td><td>前后对比滑块 + 方差热力图 + 残影案例</td><td>高 · 6–8 天</td><td>WebGPU 优先 · 实时（组件）</td></tr>
+<tr><td class="name">VXGI</td><td>体素化 + 3D mip + 锥追踪</td><td>体素切片/mip 可视化 + 漏光翻车演示</td><td>高 · 8–12 天</td><td><strong>WebGPU 必需</strong> · 半实时</td></tr>
+<tr><td class="name">SDF 追踪 GI</td><td>世界空间 cone march</td><td>SDF 切片 + 与 SSGI 屏幕外区域对比</td><td>高 · 8–12 天</td><td>WebGPU/WebGL2 静态 · 实时</td></tr>
+<tr><td class="name">DDGI</td><td>八面体 irradiance/depth 图集 + 每帧更新</td><td>探针 atlas 面板 + 收敛过程动画</td><td>很高 · 12–18 天</td><td><strong>WebGPU compute</strong> · 实时</td></tr>
+<tr><td class="name">实时 PT</td><td>软件 BVH + 1spp 累积 + 降噪</td><td>随 spp 收敛曲线 + 静止/移动对比</td><td>很高 · 12–20 天</td><td>WebGPU compute · 准实时</td></tr>
+</tbody>
+</table>
+<h4>层级四 · 进阶效果（投入产出比最高）</h4>
+<table>
+<thead><tr><th>方向</th><th>核心实现点</th><th>呈现形式</th><th>难度 · 工作量</th><th>栈 · 实时性</th></tr></thead>
+<tbody>
+<tr><td class="name">次表面散射</td><td>屏幕空间扩散模糊 + 预积分 LUT</td><td>皮肤/玉石/蜡烛切换 + 背光透射特写</td><td>中 · 3–5 天</td><td>WebGL2 · 实时</td></tr>
+<tr><td class="name">体积光与雾</td><td>后处理 god rays vs froxel 体积雾</td><td>浓度/各向异性 g 参数 + 分步 march 可视化</td><td>中 · 4–6 天</td><td>WebGL2/WebGPU · 实时</td></tr>
+<tr><td class="name">焦散</td><td>预烘焙 / 波前模拟 / 光子映射三选一</td><td>水面动画 + 三方案质量成本对照</td><td>中高 · 4–6 天</td><td>WebGL2/离线 · 实时或烘焙</td></tr>
+<tr><td class="name">折射与色散</td><td>三波长不同 IOR + 二次折射</td><td>IOR/色散滑杆 + 临界角可视化</td><td>中 · 3–4 天</td><td>WebGL2 · 实时</td></tr>
+<tr><td class="name">各向异性高光</td><td>GGX aniso / Kajiya-Kay</td><td>拉丝金属 + 高光拉伸对比</td><td>中高 · 3–5 天</td><td>WebGL2 · 实时</td></tr>
+</tbody>
+</table>
+
+<h3>2.3 Web 端可行性红线</h3>
+<div class="grid2">
+<div class="card"><h4>WebGL2 没有 compute shader</h4><p>体素化、探针更新、SVGF 降噪、BVH 重建等高频并行任务，在 WebGL2 下只能用多 pass 片元着色器或 CPU 兜底。VXGI / DDGI / 实时 PT 应直接上 WebGPU。</p></div>
+<div class="card"><h4>Web 端没有硬件光线追踪</h4><p>不存在 DXR / Vulkan RT 的等价物。所有"路径追踪"都是 GPU compute 软件光追 + BVH，必须靠累积或离线烘焙。宣传措辞要准确。</p></div>
+<div class="card"><h4>3D 纹理可用但代价不同</h4><p>WebGL2 支持 TEXTURE_3D，但采样开销与显存更敏感；辐照度体积、froxel 雾、SDF 都能做，分辨率要保守（64³–128³）。</p></div>
+<div class="card"><h4>移动端瓶颈在带宽而非算力</h4><p>ray march 半分辨率起步、MRT 控制在 2–3 张、后处理 pass 合并、KTX2/Basis 与 ASTC 压缩、DPR 上限设 2；移动端档位默认回落到烘焙方案。</p></div>
+<div class="card"><h4>WebGPU 覆盖要实测</h4><p>桌面 Chrome/Edge 与多数 Android 已可用，iOS 与旧设备需逐版本核验。每个 WebGPU demo 都应配 WebGL2 或烘焙结果的降级路径并显式标注。</p></div>
+<div class="card"><h4>精度与噪声</h4><p>WebGL2 需核对浮点渲染目标与线性过滤扩展；半精度累积会引入条带。TAA/累积类算法建议优先 WebGPU，并用抖动 + 蓝噪声缓解。</p></div>
+</div>
+
+<h3>2.4 每个 Demo 必备的八块内容</h3>
+<ol>
+<li><strong>一句话问题陈述</strong>——解决什么、为什么难，两行以内。</li>
+<li><strong>算法概要</strong>——3–5 句 + 关键公式，说明输入、输出与核心假设。</li>
+<li><strong>实时画布</strong>——可全屏，至少 2 个预设视角 + 自动巡航；鼠标/触控/键盘均可用。</li>
+<li><strong>交互控制面板</strong>——滑块 + 开关 + 预设；状态序列化进 URL query，可直接分享复现。</li>
+<li><strong>中间量可视化</strong>——G-buffer、cascade 分层、探针图集、SDF 切片、方差图做成下拉项。这是最能体现"我真的做了"的部分。</li>
+<li><strong>性能面板</strong>——帧时间、各 pass 耗时分解、draw call、显存、当前分辨率与质量档位。</li>
+<li><strong>局限与已知问题</strong>——诚实列出失效案例（屏幕外信息缺失、漏光、时域拖影）。</li>
+<li><strong>源码与参考</strong>——核心 shader 片段、论文/博客出处、资产来源。</li>
+</ol>
+<p class="muted">首页卡片：3–5 秒循环 GIF 封面（展示参数变化过程）+ 标题 + 一句话陈述 + 三个标签（层级/栈/实时或烘焙）+ 一个关键指标（如「1 spp 起始 · 收敛至 512 spp · 桌面 60 FPS」）。</p>
+
+<h3>2.5 工程加分项</h3>
+<div class="grid2">
+<div class="card"><h4>性能剖析与自适应</h4><p>GPU 计时（EXT_disjoint_timer_query_webgl2 / WebGPU timestamp-query）；帧时间反馈控制分辨率与质量档；长帧归因到具体 pass。</p></div>
+<div class="card"><h4>多级降级路径</h4><p>WebGPU → WebGL2 → 烘焙静态结果 → 预渲染视频。每级明确"损失什么"并显式标注当前档位。</p></div>
+<div class="card"><h4>资产流水线脚本化</h4><p>GLTF + Draco/meshopt、KTX2/Basis、HDR → PMREM；烘焙器做成 Node CLI，产物入库、可复现、有版本号。</p></div>
+<div class="card"><h4>视觉回归与性能门禁</h4><p>Playwright 截图对比 + 固定 seed 的确定性随机 + FPS 阈值断言，接入 CI。</p></div>
+<div class="card"><h4>共享基础设施</h4><p>monorepo 拆分 demo，共用 HUD/控制面板/性能采集；shader 变体管理与编译缓存；统一相机与场景加载器。</p></div>
+<div class="card"><h4>移动端与无障碍</h4><p>触控相机、DPR 上限、帧率上限、内存预算；键盘可达的参数面板、aria 标注、尊重 prefers-reduced-motion。</p></div>
+</div>
+
+<h3>2.6 排期</h3>
+<table>
+<thead><tr><th>阶段</th><th>内容</th><th>产出</th><th>工作量</th></tr></thead>
+<tbody>
+<tr><td class="name">阶段 0 · 底座</td><td>渲染框架、HDR 管线与色调映射、G-buffer、性能 HUD、3 个场景资产、部署</td><td>可复用 demo 模板 + 首个可访问页面</td><td>1–1.5 周</td></tr>
+<tr><td class="name">阶段 1 · 直接光照</td><td>PBR + IBL、阴影全家桶、多光源剔除、Bloom/曝光</td><td>3–4 个 demo，画质基本盘成型</td><td>2–3 周</td></tr>
+<tr><td class="name">阶段 2 · 观感增量</td><td>GTAO、SSR、次表面散射、体积光、玻璃色散</td><td>3–4 个 demo，视觉记忆点</td><td>2–3 周</td></tr>
+<tr><td class="name">阶段 3 · GI 主线</td><td>烘焙 lightmap + SH 探针（先做兜底）→ SSGI → 降噪器</td><td>2–3 个 demo + 一套烘焙工具链</td><td>3–4 周</td></tr>
+<tr><td class="name">阶段 4 · 深水区</td><td>VXGI / SDF GI / DDGI / 实时 PT 四选一做深</td><td>1 个旗舰 demo + 1 篇长文</td><td>4–6 周</td></tr>
+<tr><td class="name">阶段 5 · 收尾</td><td>移动端适配、降级路径、回归测试、文案与封面录制</td><td>完整作品集上线</td><td>2 周</td></tr>
+</tbody>
+</table>
+<div class="note"><strong>三个常见坑：</strong>①同时追 VXGI 和 DDGI——二者都需要世界空间辐照度缓存，应先抽象出这一层再二选一；②低估场景资产工作量——先用现成场景（Sponza、Cornell、Bistro）验证算法，再自制场景；③只放最终画面不放中间量——损失掉大部分说服力。</div>
+
+<h2 id="p3">第三部分 · 技术栈选型：用框架还是手写</h2>
+
+<h3>3.1 结论与成本对比</h3>
+<div class="note blue"><strong>结论：混合实现。</strong>three.js 负责底座与资源，光照算法全部自己写 shader，另加一个体量很小的原生 WebGL2 原理复现页作为加分项。不建议从零手写整条管线，也不建议全用内置材质。</div>
+<table>
+<thead><tr><th>路线</th><th>工作量（层级一全部）</th><th>展示价值</th><th>问题</th></tr></thead>
+<tbody>
+<tr><td class="name">全手写原生 WebGL2</td><td>5–6 周</td><td>低</td><td>VAO/FBO/矩阵栈/GLTF 解析/后处理链约 2000–3000 行，几乎零展示价值，却吃掉全部前期时间</td></tr>
+<tr><td class="name">全用 three.js 内置</td><td>约 5 天</td><td>很低</td><td>退化成调参 demo，被问一句"阴影是你实现的吗"就结束</td></tr>
+<tr><td class="name">混合（推荐）</td><td>2–3 周</td><td>高</td><td>需要明确划清职责边界</td></tr>
+</tbody>
+</table>
+
+<h3>3.2 职责划分</h3>
+<svg viewBox="0 0 680 340" width="100%" role="img">
+<title>层级一的职责划分</title>
+<desc>三行分工：交给框架的部分、自己写 shader 的部分、作为加分项的手写原生实现</desc>
+<rect x="40" y="40" width="600" height="84" rx="12" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text class="th" x="60" y="68">交给框架</text>
+<text class="ts" x="620" y="68" text-anchor="end">three.js 提供 · 不重复造轮子</text>
+<rect x="60" y="86" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/><text class="ts" x="126" y="99" text-anchor="middle" dominant-baseline="central" style="fill:#0C447C">场景图与相机</text>
+<rect x="202" y="86" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/><text class="ts" x="268" y="99" text-anchor="middle" dominant-baseline="central" style="fill:#0C447C">资源与纹理</text>
+<rect x="344" y="86" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/><text class="ts" x="410" y="99" text-anchor="middle" dominant-baseline="central" style="fill:#0C447C">后处理链</text>
+<rect x="486" y="86" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/><text class="ts" x="552" y="99" text-anchor="middle" dominant-baseline="central" style="fill:#0C447C">PMREM 与内置阴影</text>
+<rect x="40" y="138" width="600" height="84" rx="12" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text class="th" x="60" y="166">自己写 shader</text>
+<text class="ts" x="620" y="166" text-anchor="end">算法本体 · 评审真正看的部分</text>
+<rect x="60" y="184" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#854F0B" stroke-width="0.5"/><text class="ts" x="126" y="197" text-anchor="middle" dominant-baseline="central" style="fill:#633806">GGX BRDF</text>
+<rect x="202" y="184" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#854F0B" stroke-width="0.5"/><text class="ts" x="268" y="197" text-anchor="middle" dominant-baseline="central" style="fill:#633806">PCSS 与 CSM</text>
+<rect x="344" y="184" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#854F0B" stroke-width="0.5"/><text class="ts" x="410" y="197" text-anchor="middle" dominant-baseline="central" style="fill:#633806">Clustered 剔除</text>
+<rect x="486" y="184" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#854F0B" stroke-width="0.5"/><text class="ts" x="552" y="197" text-anchor="middle" dominant-baseline="central" style="fill:#633806">SSR ray march</text>
+<rect x="40" y="236" width="600" height="84" rx="12" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+<text class="th" x="60" y="264">加分：手写原生</text>
+<text class="ts" x="620" y="264" text-anchor="end">证明底层掌控力 · 体量要小</text>
+<rect x="60" y="282" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="0.5"/><text class="ts" x="126" y="295" text-anchor="middle" dominant-baseline="central" style="fill:#444441">最小 deferred</text>
+<rect x="202" y="282" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="0.5"/><text class="ts" x="268" y="295" text-anchor="middle" dominant-baseline="central" style="fill:#444441">手写 shadow map</text>
+<rect x="344" y="282" width="132" height="26" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="0.5"/><text class="ts" x="410" y="295" text-anchor="middle" dominant-baseline="central" style="fill:#444441">计时与剖析</text>
+</svg>
+
+<h3>3.3 自写 shader 的四种落地手段</h3>
+<ol>
+<li><strong>ShaderMaterial / RawShaderMaterial</strong>——完全自己写 vs/fs 与 uniforms。适合独立算法页（BRDF 球、SSR、SSGI 后处理 pass）。代价：不享受 three 的灯光/阴影/雾自动注入，相机矩阵与光源数据要自己传。</li>
+<li><strong>onBeforeCompile + chunk 替换</strong>——侵入内置材质，替换 <code>lights_fragment_begin</code>、<code>shadowmap_pars_fragment</code> 等 chunk。适合在保留 three 场景图与灯光系统的前提下换掉 BRDF 或阴影采样（PCSS 通常这么做）。代价：依赖 three 内部 chunk 命名，版本升级易碎。</li>
+<li><strong>TSL / NodeMaterial（three.js WebGPU 路线）</strong>——节点图写 BRDF，同一份代码可编译到 WebGL2 与 WebGPU 两个后端。适合已确定深水区要用 compute（DDGI / VXGI / PT）时的长期选择。代价：生态仍在演进，调试不便。</li>
+<li><strong>自建 pass（推荐的主姿势）</strong>——three.js 只当"场景 + 资源 + GL 状态"管理器，渲染流程自己组织：WebGLRenderTarget 手写 G-buffer（MRT）、自己写 deferred light pass、自己组织后处理链（全屏 quad + 手动 setRenderTarget 循环）。完全控制管线，又不必重写矩阵、加载器与纹理解码。多光源剔除、deferred、SSGI、降噪都应在这种姿势下做。</li>
+</ol>
+
+<h3>3.4 层级一逐项落地方式</h3>
+<table>
+<thead><tr><th>方向</th><th>定性</th><th>具体做法</th></tr></thead>
+<tbody>
+<tr><td class="name">HDR / tone mapping</td><td>混合</td><td>后处理链用 EffectComposer；tone mapping 自己写（ACES / AgX / Reinhard 可切换 + 曲线图，约 30 行）；bloom 可用现成，但建议自写一次理解 mip 链下采样</td></tr>
+<tr><td class="name">PBR 直接光</td><td><strong>自写</strong></td><td>必须自己写 GGX + Smith height-correlated + Schlick；配套白炉测试验证能量守恒</td></tr>
+<tr><td class="name">IBL</td><td>混合</td><td>成品页用 PMREMGenerator + 可视化 LUT 与辐照度图；自己实现一次 split-sum（生成 LUT + prefilter）用于理解与页面说明</td></tr>
+<tr><td class="name">多光源剔除</td><td><strong>自写</strong></td><td>three 无内置 clustered/deferred；自建 G-buffer + 屏幕分块 + 光源索引（UBO 或数据纹理）；顺带做 Forward / Deferred 对比</td></tr>
+<tr><td class="name">阴影</td><td>混合</td><td>内置 PCF / PCFSoft / VSM 作为 baseline；PCSS 用 chunk 注入或自建 shadow pass；CSM 自己实现（examples 里的 CSM.js 不完整，别直接依赖）</td></tr>
+<tr><td class="name">SSR</td><td><strong>自写</strong></td><td>three 的 SSRPass 质量一般且难改；自建法线/深度 RTT + 自己的 ray march pass</td></tr>
+<tr><td class="name">LTC 面光源</td><td>混合</td><td>先用内置 RectAreaLight(LTC) 搭场景；若要展示，则自写积分与变换矩阵查找表</td></tr>
+</tbody>
+</table>
+
+<h3>3.5 R3F 还是 vanilla three</h3>
+<p class="lead">页面多、需要路由与参数面板，React 管 UI 是合理的；但渲染侧建议封装成 vanilla three 的 class/模块，React 只负责挂载与 UI。原因是作品集多数 demo 需要顺序敏感的自建多 pass 管线，R3F 的 reconciler 与自定义 composer 容易打架。折中：简单页（材质球、IBL 展示）用 R3F，复杂多 pass 页用 vanilla。</p>
+
+<h3>3.6 什么时候真的该手写原生 WebGL2</h3>
+<ul>
+<li><strong>证明底层掌控力：</strong>做一个"原理复现"小页，手写 shadow map 或最小 deferred，400–600 行、单文件、零依赖，附源码。性价比很高，但不该成为主 demo 的实现方式。</li>
+<li><strong>需要完全控制 GL 状态与扩展：</strong>timer query、texture array、MRT、UBO 这些地方，three 的抽象反而碍事，原生更直接。</li>
+</ul>
+
+<h3>3.7 三个风险提示</h3>
+<ol>
+<li><code>onBeforeCompile</code> 依赖 three 内部 chunk 命名——必须锁版本、集中管理注入点、加冒烟测试。</li>
+<li>three.js 的重心正在迁向 WebGPURenderer / TSL，WebGLRenderer 未来进入维护状态。若深水区要用 compute，建议直接选 WebGPU 后端，避免出现"WebGL2 版 + WebGPU 版两套代码"。</li>
+<li>性能归因不要只看 <code>renderer.info</code>——它不提供 GPU 时间。用 <code>EXT_disjoint_timer_query_webgl2</code>（WebGPU 用 timestamp-query）自己测每个 pass。</li>
+</ol>
+<p class="muted">替代框架：Babylon.js 内置能力最全（SSAO/SSR/体积光/HDR/IBL 都有，WebGPU 支持成熟），适合"要开箱效果"的路线，代价是自写 shader 自由度与社区示例不如 three、React 集成偏弱。若目标是展示"我实现了算法"，three 仍是更合适的地基。</p>
+
+<footer>合并文档 · 光照与全局光照：理论体系 + Web 作品集规划 + 技术栈选型 · 生成于 2026-09-23。工作量为估算值，实际受资产准备与调试时间影响较大。</footer>
+
+</div>
+
+<script>
+(function(){
+var cv=document.getElementById('cv'),ctx=cv.getContext('2d'),W=cv.width,H=cv.height;
+var L=(function(v){var m=Math.hypot(v[0],v[1],v[2]);return [v[0]/m,v[1]/m,v[2]/m];})([-0.45,0.55,0.7]);
+var V=[0,0,1],ALB=[0.86,0.42,0.30],SKY=[0.62,0.72,0.88],GND=[0.74,0.46,0.33];
+function lum(a){return 0.2126*a[0]+0.7152*a[1]+0.0722*a[2];}
+function render(){
+var model=document.getElementById('model').value;
+var ka=+document.getElementById('ka').value,kd=+document.getElementById('kd').value;
+var ks=+document.getElementById('ks').value,sh=+document.getElementById('sh').value;
+var gi=document.getElementById('gi').checked;
+document.getElementById('kav').textContent=ka.toFixed(2);
+document.getElementById('kdv').textContent=kd.toFixed(2);
+document.getElementById('ksv').textContent=ks.toFixed(2);
+document.getElementById('shv').textContent=sh;
+document.getElementById('fml').textContent=model==='lambert'?'Lo = Ka·ρ + Kd·ρ·(n·l)':(model==='phong'?'Lo = Ka·ρ + Kd·ρ·(n·l) + Ks·(r·v)^p':'Lo = Ka·ρ + Kd·ρ·(n·l) + Ks·(n·h)^p');
+var img=ctx.createImageData(W,H),d=img.data;
+var R=Math.min(W,H)*0.42,cx=W/2,cy=H/2,sa=0,sd=0,ss=0;
+var h=(function(v){var m=Math.hypot(v[0],v[1],v[2]);return [v[0]/m,v[1]/m,v[2]/m];})([L[0]+V[0],L[1]+V[1],L[2]+V[2]]);
+for(var y=0;y<H;y++){for(var x=0;x<W;x++){
+var i=(y*W+x)*4;
+var px=(x+0.5-cx)/R,py=-(y+0.5-cy)/R,r2=px*px+py*py;
+if(r2>=1){d[i+3]=0;continue;}
+var nz=Math.sqrt(1-r2),nr=[px,py,nz];
+var ndl=Math.max(0,nr[0]*L[0]+nr[1]*L[1]+nz*L[2]);
+var spec=0;
+if(model==='phong'){var rv=Math.max(0,(2*ndl*nr[0]-L[0])*V[0]+(2*ndl*nr[1]-L[1])*V[1]+(2*ndl*nz-L[2])*V[2]);spec=Math.pow(rv,sh);}
+else if(model==='blinn'){var nh=Math.max(0,nr[0]*h[0]+nr[1]*h[1]+nz*h[2]);spec=Math.pow(nh,sh);}
+var t=(nr[1]*0.5+0.5),amb=[0,0,0],dif=[0,0,0],c;
+for(c=0;c<3;c++){
+var tint=gi?(GND[c]+(SKY[c]-GND[c])*t):1;
+amb[c]=ka*tint*ALB[c];dif[c]=kd*ndl*ALB[c];
+}
+var sp=ks*spec;
+sa+=lum(amb);sd+=lum(dif);ss+=lum([sp,sp,sp]);
+for(var c2=0;c2<3;c2++){
+var o=Math.min(1,amb[c2]+dif[c2]+sp);
+d[i+c2]=Math.round(255*Math.pow(o,1/2.2));
+}
+d[i+3]=255;
+}}
+ctx.putImageData(img,0,0);
+var tot=sa+sd+ss||1;
+document.getElementById('pa').textContent=Math.round(sa/tot*100)+'%';
+document.getElementById('pd').textContent=Math.round(sd/tot*100)+'%';
+document.getElementById('ps').textContent=Math.round(ss/tot*100)+'%';
+}
+['model','ka','kd','ks','sh','gi'].forEach(function(id){document.getElementById(id).addEventListener('input',render);});
+render();
+})();
+</script>
+</body>
+</html>

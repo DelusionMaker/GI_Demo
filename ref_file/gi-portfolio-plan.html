@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>光照与全局光照 · Web 端技术作品集规划</title>
+<style>
+:root{
+--accent:#2f6bff;--accent-soft:#eaf1ff;--ink:#1b1f26;--ink-2:#4a5260;--ink-3:#77808f;
+--line:#e4e8ef;--bg:#ffffff;--surface:#f7f9fc;--warn:#b3541e;--warn-bg:#fff4ec;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.7}
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px 80px}
+header{padding:56px 0 28px;border-bottom:1px solid var(--line)}
+h1{font-size:28px;font-weight:600;margin:0 0 8px}
+.sub{color:var(--ink-2);margin:0;max-width:760px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:28px 0 0}
+.stat{background:var(--surface);border-radius:10px;padding:14px 16px}
+.stat b{display:block;font-size:24px;font-weight:600;color:var(--accent)}
+.stat span{color:var(--ink-3);font-size:13px}
+nav{position:sticky;top:0;background:rgba(255,255,255,.94);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);z-index:10;padding:10px 0;display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+nav a{color:var(--ink-2);text-decoration:none}
+nav a:hover{color:var(--accent)}
+h2{font-size:20px;font-weight:600;margin:44px 0 6px;padding-top:8px}
+h2 .tag{display:inline-block;font-size:12px;font-weight:500;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:2px 8px;margin-left:8px;vertical-align:middle}
+h3{font-size:15px;font-weight:600;margin:26px 0 4px}
+p.lead{color:var(--ink-2);margin:0 0 14px;max-width:860px}
+table{width:100%;border-collapse:collapse;margin:14px 0 8px;font-size:13px}
+th{text-align:left;background:var(--surface);color:var(--ink-2);font-weight:600;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink)}
+td.name{font-weight:600;white-space:nowrap}
+td .muted{color:var(--ink-3)}
+tr:hover td{background:#fbfcfe}
+.pill{display:inline-block;font-size:12px;border-radius:6px;padding:1px 7px;border:1px solid var(--line);color:var(--ink-2);white-space:nowrap}
+.pill.rt{border-color:#bcd0ff;color:var(--accent);background:var(--accent-soft)}
+.pill.bake{border-color:#f0cfa8;color:var(--warn);background:var(--warn-bg)}
+.pill.mix{border-color:#cfd8e6;color:var(--ink-2);background:var(--surface)}
+.note{background:var(--warn-bg);border-left:3px solid var(--warn);padding:12px 16px;border-radius:0 8px 8px 0;color:#6b4a2c;margin:16px 0}
+.note.blue{background:var(--accent-soft);border-left-color:var(--accent);color:#25406e}
+ul.check{margin:8px 0 0;padding-left:20px}
+ul.check li{margin:3px 0}
+ol{margin:8px 0 0;padding-left:22px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-top:14px}
+.card{border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.card h4{margin:0 0 6px;font-size:14px;font-weight:600}
+.card p{margin:0;color:var(--ink-2);font-size:13px}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);color:var(--ink-3);font-size:13px}
+@media(max-width:760px){table{font-size:12px}th,td{padding:8px 6px}.wrap{padding:0 14px 60px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+<h1>光照与全局光照 · Web 端技术作品集规划</h1>
+<p class="sub">以「光照 / GI」为单一主题的深度作品集：按技术层级梳理可做的演示方向、实现要点、呈现形式与工程量，并给出组织方式与排期建议。工作量按「已有 WebGL 基础、每天有效投入 4–6 小时」估算，单位为工作日。</p>
+<div class="stats">
+<div class="stat"><b>23</b><span>可展示方向</span></div>
+<div class="stat"><b>4</b><span>技术层级</span></div>
+<div class="stat"><b>6–8</b><span>建议成品数量</span></div>
+<div class="stat"><b>14–20 周</b><span>完整主线排期</span></div>
+</div>
+</header>
+
+<nav>
+<a href="#pick">如何挑选</a><a href="#t1">层级一 直接光照</a><a href="#t2">层级二 烘焙 GI</a><a href="#t3">层级三 实时 GI</a><a href="#t4">层级四 进阶效果</a><a href="#limit">可行性红线</a><a href="#card">Demo 卡片规格</a><a href="#bonus">工程加分项</a><a href="#plan">排期</a>
+</nav>
+
+<h2 id="pick">如何挑选：三条筛选标准<span class="tag">先读这段</span></h2>
+<p class="lead">作品集的评价标准不是"会多少种算法"，而是<strong>能否把一个算法做对、做透、并诚实说明它的边界</strong>。建议按下述三条筛选。</p>
+<ol>
+<li><strong>有可验证的正确性。</strong>优先选能用参考解对照的方向（Cornell box 的 GI 收敛、能量守恒测试、白炉测试 white furnace test）。能被验证的效果，才讲得清对错。</li>
+<li><strong>有可视化的中间量。</strong>凡是能把中间缓冲（G-buffer、cascade 分层、探针图集、SDF 切片、方差图）直接显示出来的方向，展示价值远高于只能看最终画面的方向。</li>
+<li><strong>有真实的性能故事。</strong>能讲清"为什么掉帧、怎么优化、降级到什么档位"的方向，比单纯惊艳的效果更能体现工程能力。</li>
+</ol>
+<div class="note blue"><strong>推荐主线组合（6 个）：</strong>HDR/色调映射底座 → PBR + IBL → 阴影全家桶 → 烘焙 lightmap + SH 探针 → GTAO/SSGI → 一条深水方向（VXGI / SDF / DDGI / 实时 PT 四选一）。这六个覆盖了从底座到 GI 的完整链路，且每一环都能独立成页。</div>
+
+<h2 id="t1">层级一 · 实时直接光照<span class="tag">每帧计算，无预计算</span></h2>
+<p class="lead">作品集的地基。这一层做不干净，后面所有 GI 都会"看起来怪但说不出哪里怪"。建议先做满这一层再往上走。</p>
+<table>
+<thead><tr><th>方向</th><th>实现要点</th><th>推荐呈现形式</th><th>难度 / 工作量</th><th>技术栈</th><th>实时性</th></tr></thead>
+<tbody>
+<tr><td class="name">HDR 管线与色调映射</td><td>ACES / AgX 色调映射、自动曝光（亮度直方图回读）、物理 bloom（mip 链下采样再上采样）；曝光以 EV 为单位</td><td>EV 滑杆 + 色调映射曲线切换 + 过曝回收前后对比 + 直方图面板</td><td>中低 / 2–3 天</td><td>WebGL2 或 WebGPU</td><td><span class="pill rt">实时</span></td></tr>
+<tr><td class="name">PBR 直接光<br>Cook-Torrance</td><td>GGX NDF + Smith height-correlated 遮蔽 + Schlick 菲涅耳；金属/非金属 F0 分支；分母 (n·l)(n·v) 的除零保护；能量守恒校验</td><td>材质球 + 金属度/粗糙度/F0 滑杆 + BRDF 剖面 lobe 图 + 白炉测试开关</td><td>中低 / 2–3 天</td><td>three.js / R3F 自定义材质</td><td><span class="pill rt">实时</span></td></tr>
+<tr><td class="name">IBL 环境光照</td><td>Split-sum 近似：辐照度图 + 预滤波 radiance（按粗糙度取 mip）+ BRDF LUT；PMREM 生成；HDR 环境贴图加载与压缩</td><td>HDRI 切换（室内/室外/夜景）+ 粗糙度扫过动画 + IBL 开关对比 + LUT 贴图可视化</td><td>中 / 3–4 天</td><td>three.js PMREMGenerator + RGBELoader；KTX2</td><td><span class="pill mix">实时（贴图离线预处理）</span></td></tr>
+<tr><td class="name">多光源与剔除</td><td>G-buffer MRT（法线/深度/albedo/材质）；Forward vs Deferred vs Clustered 三档对比；Clustered 按屏幕分块 + 深度切片建立光源索引</td><td>光源数 1→2048 滑块 + 帧时间曲线 + 分块光源数热力图 + 三种管线切换</td><td>中 / 4–6 天</td><td>WebGL2（MRT + UBO）或 WebGPU</td><td><span class="pill rt">实时</span></td></tr>
+<tr><td class="name">阴影全家桶<br>SM / PCF / PCSS / CSM / VSM</td><td>深度图比较采样；PCSS 用 blocker search 估半影宽度；CSM 按视锥切分 + 级联间混合；VSM 用矩做可过滤深度；bias / slope-scale / normal-offset 三种补偿</td><td>算法下拉切换 + bias/滤波核/级联数参数 + A/B 对比滑块 + cascade 分层着色 + acne 与 peter-panning 的"故意翻车"演示</td><td>中 / 5–8 天</td><td>WebGL2（depth texture + TEXTURE_2D_ARRAY）</td><td><span class="pill rt">实时</span></td></tr>
+<tr><td class="name">屏幕空间反射 SSR</td><td>G-buffer ray march + 二分细化 + 粗糙度抖动 + 厚度与边缘淡出 + 时域累积</td><td>反射开关 + 步数/厚度/分辨率缩放参数 + 与平面反射、环境反射三方对比 + 屏幕外失效案例</td><td>中 / 3–5 天</td><td>WebGL2 / WebGPU</td><td><span class="pill rt">实时</span></td></tr>
+<tr><td class="name">面光源实时近似 LTC</td><td>线性变换余弦：把 GGX lobe 仿射变换为余弦分布，解析积分多边形光源；需预计算变换矩阵查找表</td><td>面光源形状/尺寸/强度调节 + 与点光源近似的差异对比 + 高光随光源尺寸拉伸演示</td><td>高 / 4–6 天</td><td>three.js RectAreaLight(LTC) 或自写</td><td><span class="pill rt">实时</span></td></tr>
+</tbody>
+</table>
+
+<h2 id="t2">层级二 · 烘焙 GI<span class="tag">离线预计算，运行时零成本</span></h2>
+<p class="lead">最容易被低估的一层。它既是移动端与低配设备的兜底方案，也是"我懂预计算管线"的直接证据——烘焙器本身就是一个可展示的工程产物。</p>
+<table>
+<thead><tr><th>方向</th><th>实现要点</th><th>推荐呈现形式</th><th>难度 / 工作量</th><th>技术栈</th><th>实时性</th></tr></thead>
+<tbody>
+<tr><td class="name">光照贴图 Lightmap</td><td>UV2 无重叠展开；烘焙器做半球/射线采样或 GPU 烘焙；可选方向性（每像素 SH 或主导方向）以保留法线细节；光照贴图与实时光叠加</td><td>烘焙前/后开关 + lightmap 通道叠加可视化 + 分辨率/采样数/烘焙耗时三参数 + 烘焙进度条</td><td>中 / 3–6 天<span class="muted">（用现成烘焙器约 2 天）</span></td><td>three.js 烘焙器或 Blender 导出 GLTF；KTX2 压缩</td><td><span class="pill bake">离线烘焙 + 实时展示</span></td></tr>
+<tr><td class="name">SH 光照探针</td><td>探针布点（自动/手动）+ 每探针烘 9 或 25 个球谐系数（L1/L2）+ 运行时四面体或三线性插值 + 探针可视化</td><td>点云探针可视化 + 探针开关 + <span class="muted">重点展示</span>动态物体接入静态 GI 的前后差异</td><td>中 / 4–5 天</td><td>自写烘焙脚本 + three.js LightProbe</td><td><span class="pill bake">离线烘焙 + 实时展示</span></td></tr>
+<tr><td class="name">辐照度体积<br>Irradiance Volume</td><td>3D 纹理存 SH 或辐照度；世界空间三线性 + 梯度（gradient）修正，抑制墙面渗色与漏光；体积分辨率与内存的权衡</td><td>3D 纹理切片查看器 + 插值权重热力图 + 与离散探针方案的对比（漏光程度）</td><td>中高 / 5–7 天</td><td>WebGL2 TEXTURE_3D / WebGPU</td><td><span class="pill bake">离线烘焙 + 实时展示</span></td></tr>
+<tr><td class="name">离线路径追踪烘焙</td><td>自写 PT：NEE（光源采样）+ MIS（BSDF/光源混合）+ 俄罗斯轮盘终止；把收敛结果烘进贴图/探针/体积</td><td>渐进式烘焙进度 + spp 与噪点对比 + 与实时近似方案的误差热力图</td><td>高 / 6–10 天</td><td>WebGPU compute 或 Node CPU 离线脚本</td><td><span class="pill bake">离线烘焙 + 实时展示</span></td></tr>
+</tbody>
+</table>
+<div class="note"><strong>关键取舍：</strong>烘焙方案的价值不在画质上限，而在<strong>可预测的运行时成本</strong>。展示时请务必给出"烘焙耗时 / 产物体积 / 运行时开销"三个数字，这才是它相对实时 GI 的真实优势。</div>
+
+<h2 id="t3">层级三 · 实时 GI<span class="tag">每帧近似求解，依赖缓存与降噪</span></h2>
+<p class="lead">这一层是作品集的技术制高点，也是最容易烂尾的一层。建议<strong>只选一条做深</strong>，其余以对比 demo 的形式轻量呈现。</p>
+<table>
+<thead><tr><th>方向</th><th>实现要点</th><th>推荐呈现形式</th><th>难度 / 工作量</th><th>技术栈</th><th>实时性</th></tr></thead>
+<tbody>
+<tr><td class="name">GTAO / HBAO</td><td>沿视线方向做水平角积分；多次弹射近似；与漫反射 GI 一并求解（AO 只是副产物）；半分辨率 + 双边上采样</td><td>算法切换 + 半径/采样数参数 + AO-only 通道视图 + 多次弹射开/关 + 与真值（离线烘焙）的误差图</td><td>中 / 3–5 天</td><td>WebGL2</td><td><span class="pill rt">实时</span></td></tr>
+<tr><td class="name">SSGI 屏幕空间 GI</td><td>G-buffer ray march，命中处复用上一帧屏幕颜色作为一次间接光；半分辨率 + 时域累积 + 双边/联合滤波</td><td>开关 + 步数/分辨率缩放 + 单帧噪点 vs 累积后对比 + <span class="muted">必做</span>屏幕外信息缺失的失效案例演示</td><td>中高 / 5–8 天</td><td>WebGL2 / WebGPU</td><td><span class="pill rt">实时</span></td></tr>
+<tr><td class="name">降噪器专题<br>SVGF / à-trous / BMFR</td><td>时域重投影（motion vector）+ 法线/深度/亮度三权重拒绝 + 空域边缘保持滤波 + 方差估计驱动核宽</td><td>降噪前/后对比滑块 + 各权重通道可视化 + 方差热力图 + 残影（disocclusion）失效案例</td><td>高 / 6–8 天</td><td>WebGPU compute 推荐；WebGL2 多 pass 可行</td><td><span class="pill rt">实时（也是其他 demo 的组件）</span></td></tr>
+<tr><td class="name">VXGI 体素锥追踪</td><td>场景体素化（无 compute 时需 CPU 预体素化或多 pass 光栅）+ 3D 纹理 mip 链 + 漫反射多锥 + 镜面锥；各向异性 mip 与漏光问题</td><td>体素网格切片/调 mip 可视化 + 锥数量与张角参数 + 漏光与自遮挡的"翻车"演示</td><td>高 / 8–12 天</td><td>WebGPU 推荐（体素化需 compute）；WebGL2 仅静态预烘焙</td><td><span class="pill mix">半实时（动态体素化需 WebGPU）</span></td></tr>
+<tr><td class="name">SDF 世界空间追踪 GI</td><td>场景 SDF 烘焙（3D 纹理或 mesh SDF 集）+ 世界空间 cone/ray march 收集辐照度（Lumen / Godot SDFGI 思路）；屏幕外信息可获取是其相对 SSGI 的核心优势</td><td>SDF 切片视图 + march 步数/锥角参数 + 与 SSGI 同场景对比（尤其屏幕外区域）+ 稀疏 SDF 的 mip 层级演示</td><td>高 / 8–12 天</td><td>WebGPU（或 WebGL2 + 静态 3D 纹理）</td><td><span class="pill mix">实时（静态）/ 半实时（动态）</span></td></tr>
+<tr><td class="name">DDGI 动态漫反射 GI</td><td>探针网格 + 每探针八面体 irradiance/depth 图集 + 每帧射线更新（需 compute）+ 世界空间插值 + 用 depth 做 backface 剔除抗漏光</td><td>探针图集面板可视化 + 更新频率/射线数参数 + <span class="muted">重点展示</span>光源变化时的收敛过程动画</td><td>很高 / 12–18 天</td><td>WebGPU compute（强烈建议）</td><td><span class="pill rt">实时</span></td></tr>
+<tr><td class="name">实时路径追踪 + 降噪</td><td>软件 BVH + compute 路径追踪，1 spp/帧累积 + 时域重投影 + 空域降噪；相机移动时重置累积</td><td>随 spp 收敛的可视化（画面对比 + 方差下降曲线）+ 降噪开关 + 静止/移动对比 + 帧时间</td><td>很高 / 12–20 天</td><td>WebGPU compute（three.js WebGPURenderer / TSL）</td><td><span class="pill mix">准实时（需累积）</span></td></tr>
+</tbody>
+</table>
+
+<h2 id="t4">层级四 · 进阶效果<span class="tag">材质与介质，叠加在光照之上</span></h2>
+<p class="lead">投入产出比最高的一层：单个效果工作量普遍在 3–6 天，但视觉辨识度极强，适合作为作品集的"记忆点"填充在主线之间。</p>
+<table>
+<thead><tr><th>方向</th><th>实现要点</th><th>推荐呈现形式</th><th>难度 / 工作量</th><th>技术栈</th><th>实时性</th></tr></thead>
+<tbody>
+<tr><td class="name">次表面散射 SSS</td><td>屏幕空间可分离扩散模糊（按深度差取核半径）+ 预积分皮肤 LUT（曲率/NdotL）+ 背光透射项</td><td>皮肤/玉石/蜡烛/大理石切换 + 散射半径与颜色参数 + 与纯漫反射对比 + 背光耳朵透红特写</td><td>中 / 3–5 天</td><td>WebGL2</td><td><span class="pill rt">实时</span></td></tr>
+<tr><td class="name">体积光与体积雾</td><td>两条路线：后处理 god rays（遮挡通道径向模糊）与 froxel 体积雾（视锥体素 3D 纹理 + 散射积分 + 时域抖动）</td><td>浓度/各向异性 g/光源形状参数 + 与简单线性雾对比 + 分步 ray march 可视化 + 两种路线切换</td><td>中 / 4–6 天</td><td>WebGL2（3D 纹理）/ WebGPU</td><td><span class="pill rt">实时</span></td></tr>
+<tr><td class="name">焦散 Caustics</td><td>三选一：①预烘焙 caustic 序列纹理投影；②2D 波前模拟实时生成 caustic 贴图；③光子映射离线烘焙</td><td>水面波动动画 + 焦散强度/颜色参数 + 泳池或玻璃杯场景 + 三种方案的质量与成本对照表</td><td>中高 / 4–6 天<span class="muted">（方案①②）</span></td><td>WebGL2 / 离线脚本</td><td><span class="pill mix">实时（①②）/ 烘焙（③）</span></td></tr>
+<tr><td class="name">折射与色散玻璃</td><td>多波长（RGB 三通道不同 IOR）折射采样 + 屏幕空间二次折射 + 菲涅耳混合 + 粗糙度模糊 + 全内反射临界角</td><td>玻璃球/宝石/棱镜 + IOR 与色散强度参数 + 临界角可视化 + 色差放大演示</td><td>中 / 3–4 天</td><td>WebGL2 / three.js MeshPhysicalMaterial</td><td><span class="pill rt">实时</span></td></tr>
+<tr><td class="name">各向异性高光</td><td>GGX 各向异性（αx/αy 双粗糙度）或 Kajiya-Kay；切线方向与切线贴图</td><td>拉丝金属盘/头发/丝绸切换 + 各向异性方向与强度 + 高光拉伸对比</td><td>中高 / 3–5 天</td><td>WebGL2</td><td><span class="pill rt">实时</span></td></tr>
+<tr><td class="name">Clustered 体积 GI 混合</td><td>把烘焙探针与实时 SSGI 按置信度混合：屏幕外退化为烘焙结果，屏幕内用实时结果</td><td>混合权重热力图 + 单独显示两种来源 + 切换相机时的稳定性演示</td><td>高 / 6–8 天</td><td>WebGPU</td><td><span class="pill rt">实时</span></td></tr>
+</tbody>
+</table>
+
+<h2 id="limit">Web 端可行性红线<span class="tag">决定技术栈选型</span></h2>
+<div class="grid2">
+<div class="card">
+<h4>WebGL2 没有 compute shader</h4>
+<p>体素化、探针更新、SVGF 降噪、BVH 重建等高频数据并行任务，在 WebGL2 下只能用多 pass 片元着色器或 CPU 兜底。结论：VXGI / DDGI / 实时 PT 这三个方向应直接上 WebGPU，不要在 WebGL2 上硬做。</p>
+</div>
+<div class="card">
+<h4>Web 端没有硬件光线追踪</h4>
+<p>不存在 DXR / Vulkan RT 的等价物。所有"路径追踪"都是 GPU compute 软件光追 + BVH，帧率受限，必须靠累积或离线烘焙。宣传时措辞要准确，否则会被内行一眼看穿。</p>
+</div>
+<div class="card">
+<h4>3D 纹理可用但代价不同</h4>
+<p>WebGL2 支持 TEXTURE_3D，但采样开销与显存占用都更敏感；辐照度体积、froxel 雾、SDF 都能做，但分辨率要保守（如 64³–128³）。WebGPU 下余量更大。</p>
+</div>
+<div class="card">
+<h4>移动端瓶颈在带宽而非算力</h4>
+<p>ray march 一律半分辨率起步、MRT 控制在 2–3 张、后处理 pass 合并、开启 KTX2 / Basis 与 ASTC 压缩、DPR 上限设 2。移动端档位应默认回落到烘焙方案。</p>
+</div>
+<div class="card">
+<h4>WebGPU 覆盖要实测</h4>
+<p>桌面 Chrome / Edge 与多数 Android 已可用，iOS 与部分旧设备仍需逐版本核验。每个 WebGPU demo 都应配备 WebGL2 或烘焙结果的降级路径，并在页面显式标注。</p>
+</div>
+<div class="card">
+<h4>精度与噪声</h4>
+<p>WebGL2 默认缺 float 线性过滤与部分浮点渲染目标支持，需核对扩展；半精度累积会引入条带。TAA/累积类算法建议优先在 WebGPU 上做，并用抖动 + 蓝噪声缓解。</p>
+</div>
+</div>
+
+<h2 id="card">Demo 卡片规格<span class="tag">每个 demo 必备的八块内容</span></h2>
+<p class="lead">统一规格是作品集专业度的直接体现。建议做成可复用的页面模板，所有 demo 共用同一套 HUD、控制面板与文档结构。</p>
+<ol>
+<li><strong>一句话问题陈述</strong>——这个 demo 解决什么、为什么难。放在标题正下方，两行以内。</li>
+<li><strong>算法概要</strong>——3–5 句 + 关键公式（用 KaTeX 或预渲染公式图），说明输入、输出与核心假设。</li>
+<li><strong>实时画布</strong>——可全屏；提供至少 2 个预设视角与 1 个自动巡航；鼠标/触控/键盘三种操作都可用。</li>
+<li><strong>交互控制面板</strong>——滑块 + 开关 + 预设；状态序列化进 URL query，可直接分享复现。</li>
+<li><strong>中间量可视化</strong>——把 G-buffer、cascade 分层、探针图集、SDF 切片、方差图等调试视图做成下拉项。这是最能体现"我真的做了"的部分。</li>
+<li><strong>性能面板</strong>——帧时间（ms）、各 pass 耗时分解、draw call、显存占用、当前分辨率缩放与质量档位。</li>
+<li><strong>局限与已知问题</strong>——诚实列出失效案例（屏幕外信息缺失、漏光、时域拖影、漏采样）。这是拉开差距的一项。</li>
+<li><strong>源码与参考</strong>——核心 shader 片段链接、论文/博客出处、数据集与资产来源。</li>
+</ol>
+<p class="lead">首页卡片应包含：封面 GIF（3–5 秒循环，展示参数变化过程）、标题、一句话陈述、三个标签（层级 / 技术栈 / 实时或烘焙）、一个关键指标（如「1 spp 起始 · 收敛至 512 spp · 桌面 60 FPS」）。</p>
+
+<h2 id="bonus">工程加分项<span class="tag">体现工程能力而非炫技</span></h2>
+<div class="grid2">
+<div class="card">
+<h4>性能剖析与自适应</h4>
+<p>GPU 计时（WebGL2 的 EXT_disjoint_timer_query_webgl2 / WebGPU timestamp-query）；帧时间反馈控制分辨率缩放与质量档；长帧归因到具体 pass。</p>
+</div>
+<div class="card">
+<h4>多级降级路径</h4>
+<p>WebGPU → WebGL2 → 烘焙静态结果 → 预渲染视频/截图。每级明确"损失什么"，并在页面显式标注当前所处档位。</p>
+</div>
+<div class="card">
+<h4>资产流水线脚本化</h4>
+<p>GLTF + Draco/meshopt 几何压缩、KTX2/Basis 纹理压缩、HDR → PMREM 预处理；烘焙器做成 Node CLI，产物入库、可复现、有版本号。</p>
+</div>
+<div class="card">
+<h4>视觉回归与性能门禁</h4>
+<p>Playwright 截图对比（阈值化 diff）+ 固定 seed 的确定性随机 + FPS 阈值断言，接入 CI。这一项最能证明工程素养。</p>
+</div>
+<div class="card">
+<h4>共享基础设施</h4>
+<p>monorepo 下拆分 demo，共用 HUD、控制面板、性能采集、截图工具；shader 变体管理与编译缓存；统一的相机与场景加载器。</p>
+</div>
+<div class="card">
+<h4>移动端与无障碍</h4>
+<p>触控相机、DPR 上限、帧率上限、内存预算；键盘可达的参数面板、aria 标注、尊重 prefers-reduced-motion。</p>
+</div>
+</div>
+
+<h2 id="plan">排期建议<span class="tag">主线 14–20 周</span></h2>
+<table>
+<thead><tr><th>阶段</th><th>内容</th><th>产出</th><th>工作量</th></tr></thead>
+<tbody>
+<tr><td class="name">阶段 0 · 底座</td><td>渲染框架（R3F 或自写）、HDR 管线与色调映射、G-buffer、性能 HUD、3 个场景资产（Cornell box / 室内 / 户外）、构建与部署</td><td>可复用的 demo 模板 + 首个可访问页面</td><td>1–1.5 周</td></tr>
+<tr><td class="name">阶段 1 · 直接光照</td><td>PBR + IBL、阴影全家桶、多光源剔除、Bloom/曝光</td><td>3–4 个 demo，画质基本盘成型</td><td>2–3 周</td></tr>
+<tr><td class="name">阶段 2 · 观感增量</td><td>GTAO、SSR、次表面散射、体积光、玻璃色散</td><td>3–4 个 demo，视觉记忆点</td><td>2–3 周</td></tr>
+<tr><td class="name">阶段 3 · GI 主线</td><td>烘焙 lightmap + SH 探针（先做，保证兜底）→ SSGI → 降噪器</td><td>2–3 个 demo + 一套烘焙工具链</td><td>3–4 周</td></tr>
+<tr><td class="name">阶段 4 · 深水区</td><td>VXGI / SDF GI / DDGI / 实时 PT 四选一做深</td><td>1 个旗舰 demo + 1 篇长文</td><td>4–6 周</td></tr>
+<tr><td class="name">阶段 5 · 收尾</td><td>移动端适配、降级路径、回归测试、文案与封面录制</td><td>完整作品集上线</td><td>2 周</td></tr>
+</tbody>
+</table>
+<div class="note"><strong>三个常见坑：</strong>①同时追 VXGI 和 DDGI——二者都需要世界空间辐照度缓存，应先抽象出这一层再二选一；②低估场景资产工作量——建议先用现成场景（Sponza、Cornell、Bistro）验证算法，再自制场景；③只放最终画面不放中间量——损失掉大部分说服力。</div>
+
+<footer>规划文档 · 光照与全局光照主题 Web 端作品集 · 工作量为估算值，实际受资产准备与调试时间影响较大。</footer>
+
+</div>
+</body>
+</html>
