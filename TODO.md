@@ -223,7 +223,7 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 | 步骤 | 内容 | 验收点 | 状态 |
 | --- | --- | --- | --- |
 | **S1** | `Pipeline` + `Pass` + `FullscreenQuad` 抽象；场景渲进 RGBA16F；`PostFX` 从直通改为挂载 Pipeline；`CanvasRoot` 接上 `flat` 与 resize | 画面与直出路径一致；HUD 显示 HDR 档位；不支持浮点时回落 RGBA8 并在 HUD 标注 | ✅ **代码完成**（浏览器内验证待补，见 3.4.1） |
-| **S2** | `passes/ToneMappingPass.ts`：ACES(fitted) / AgX / Reinhard；控制面板加算法下拉 + EV 滑杆；**曲线对照图**（canvas 2D 画 0..8 → 输出） | 三条曲线形状正确（Reinhard 无 shoulder、ACES 有 toe/shoulder、AgX 更陡）；EV 变化时整体亮度单调 | 0.5 天 |
+| **S2** | 曝光滑杆 / 曲线下拉 / URL 序列化 / 曲线对照图已接通（曲线分支结构也已在 `tonemap()` 里留好）；**曲线的数学部分留给你写** | 三条曲线形状正确（Reinhard 无 shoulder、ACES 有 toe/shoulder、AgX 更陡）；EV 变化时整体亮度单调 | 🟡 框架就绪，待实现曲线 |
 | **S3** | `passes/LuminancePass.ts`（降采样 + log 平均 + 异步回读）；直方图面板；「过曝回收」A/B 对比开关 | EV 从 −4 扫到 +4 时高光**不截断**（对比 8bit 路径的死白/色块）；直方图随 EV 平移；自动曝光 1–2 帧收敛、无可见振荡 | 1 天 |
 | **S4** | `passes/BloomPass.ts`：阈值 + 6–8 级 mip 下采样 + 上采样合成 | mip 链各级可缩略图可视化；关闭时高光边界硬、开启后柔和不糊；给出 bloom 的耗时占比 | 1 天（可拆到下一轮） |
 | **S5** | 收尾：`src/site/demos.ts` 的 `hdr` 条目 status → `done`，如实补 limitations（自动曝光迟滞、半精度暗部条带） | 站点上该 demo 不再显示「规划中」 | 0.5 天 |
@@ -267,6 +267,28 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 **行为变更（预期内，需知悉）**
 
 加了 `flat` 之后，R3F 不再施加 `ACESFilmic` 色调映射，因此画面会比改造前**更亮、高光无 filmic 滚降**。这是「色调映射改由自建 pass 负责」这一锁定决策的直接结果 —— S2 把色调映射拿回自己手里后即恢复可控状态。`bypass` 开关对比的是「场景直出」与「自建链」，两者都是无色调映射，因此 A/B 是有意义的（预期仅有 16F 量化带来的亚像素差异）。
+
+#### 3.4.2 S2 框架就绪记录
+
+**已接通（管线部分）**
+
+| 能力 | 落点 |
+| --- | --- |
+| EV 滑杆（−4…+4，每帧推进管线） | `postfx/HDRPanel.tsx` + `postfx/HDRDriver.tsx` |
+| 曲线下拉（直通 / ACES / AgX / Reinhard） | 同上 |
+| URL 序列化（`?ev=-2&tm=aces` 打开即复现） | `postfx/hdrParams.ts`（复用 `createDemoStore`） |
+| 曲线对照图（含直通虚线参照、未实现水印） | `postfx/ToneCurveGraph.tsx` |
+| GPU 侧三条曲线的分支结构 | `postfx/passes/TonemapOutputPass.ts` 的 `tonemap()` |
+
+**等你来做的三件事**
+
+1. **实现三条曲线**：`postfx/toneCurves.ts` 的 `reinhardCurve` / `acesCurve` / `agxCurve`（建议顺序 Reinhard → ACES → AgX）
+2. **写对应 GLSL**：`postfx/passes/TonemapOutputPass.ts` 的 `tonemap()`，三个分支已留好
+3. **决定「过曝回收」怎么呈现**：该文件 `main()` 里列了两种低成本做法（加 `uClipView` 开关 / 新增 clip-view pass）
+
+每处 TODO 都写了形状要求与自查点；曲线未实现时界面会显示「曲线未实现」而不是静默无效。
+
+**本轮顺带修掉的布局问题**：HUD 原为「上下两行」，右上角性能面板长高会把左下面板推出画布（实测溢出 455px）。已重构为**左右两列** + 插槽收缩滚动，并在 e2e 里加了布局断言守住这条不变量。
 
 ---
 

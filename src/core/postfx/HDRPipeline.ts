@@ -34,12 +34,17 @@ export type { PassTiming }
  * 步骤 2 的曲线会在已映射过的数据上再映射一次。
  */
 
-/** 步骤 2 放开 'aces' | 'agx' | 'reinhard' */
-export type TonemapMode = 'linear'
+/**
+ * 色调映射模式。索引要与 `passes/TonemapOutputPass.ts` 的 `tonemap()` 分支、
+ * 以及 `toneCurves.ts` 的 `TONE_CURVES` 三处保持一致。
+ */
+export type TonemapMode = 'linear' | 'aces' | 'agx' | 'reinhard'
 
 const TONEMAP_INDEX: Record<TonemapMode, number> = {
   linear: 0,
-  // aces: 1, agx: 2, reinhard: 3（步骤 2）
+  aces: 1,
+  agx: 2,
+  reinhard: 3,
 }
 
 export interface HDRPipelineOptions {
@@ -96,14 +101,19 @@ export class HDRPipeline {
     return this.pipeline.getPassNames()
   }
 
-  /** EV 曝光偏移（手动/自动模式共用；自动模式下这是测光结果上的偏移） */
+  /**
+   * EV 曝光偏移（手动/自动模式共用；自动模式下这是测光结果上的偏移）。
+   *
+   * 只写进 Pipeline：导出 pass 每帧从 `PassContext` 读曝光、不做本地缓存，
+   * 这样「曝光从哪来」只有一条路径，不会出现两处状态不同步。
+   */
   setExposureEV(ev: number): void {
     this.pipeline.exposureEV = ev
-    this.output.setExposureEV(ev)
   }
 
   setTonemap(mode: TonemapMode): void {
-    this.output.setTonemapIndex(TONEMAP_INDEX[mode])
+    // URL 里的 tm 可能是任意字符串，取不到索引时退回直通，避免写入 undefined
+    this.output.setTonemapIndex(TONEMAP_INDEX[mode] ?? TONEMAP_INDEX.linear)
   }
 
   /**

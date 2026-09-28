@@ -9,6 +9,82 @@
 
 ---
 
+## 2026-09-28 · p0-hdr 步骤 2 框架：EV / 曲线 / 曲线图接通，曲线数学留白
+
+### 目标
+
+把步骤 2 的**管线部分**全部接通（曝光滑杆、曲线下拉、URL 序列化、曲线对照图、GPU 分支结构），
+把**曲线数学**留空并标成 TODO —— 这部分属于「必须自己能讲清楚」的内容，不由工具代笔。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/toneCurves.ts` | **新建（留给你写）** | 三条曲线的 CPU 实现位置 + 待填 TODO + 形状要求 + 双份实现的同步策略选项 |
+| `src/core/postfx/ToneCurveGraph.tsx` | 新建 | 曲线对照图（canvas 2D：直通虚线参照、绘图区裁剪、未实现水印） |
+| `src/core/postfx/hdrParams.ts` | 新建 | 用户旋钮（ev / tm / bypass / hdrDebug），走 createDemoStore 自动获得 URL 序列化 |
+| `src/core/postfx/hdrStore.ts` | 重构 | 收敛为纯运行时状态（档位 / pass 名 / 计时），旋钮移交 hdrParams |
+| `src/core/postfx/HDRPanel.tsx` | 改造 | 增加 EV 滑杆、曲线下拉、曲线图 |
+| `src/core/postfx/HDRDriver.tsx` | 改造 | 每帧把旋钮推进管线（曝光 / 曲线 / 旁路 / 调试视图） |
+| `src/core/postfx/passes/TonemapOutputPass.ts` | 改造 | 增加 `tonemap()` 分支骨架（三条曲线的 TODO 位置）；曝光改为每帧从 `PassContext` 读 |
+| `src/core/postfx/HDRPipeline.ts` | 改造 | `TonemapMode` 扩到 4 档；`setTonemap` 对非法值兜底 |
+| `src/core/hud/Hud.tsx` | 重构 | **两行 → 两列**（见踩坑 1） |
+| `src/styles/global.css` | 改造 | HUD 两列布局 + 插槽收缩滚动 + 曲线图样式 |
+| `e2e/smoke.spec.ts` | 改造 | 新增参数 URL 序列化用例、HUD 溢出布局断言 |
+
+### 关键设计决策
+
+1. **曲线数学不代笔**：`toneCurves.ts`（CPU，供曲线图）与 `TonemapOutputPass.ts` 的 `tonemap()`（GPU）两处都只给结构、不给实现，每条都写了形状要求与自查点。
+2. **旋钮进 URL，运行时状态不进**：`hdrParams` 承载 ev / tm / bypass / hdrDebug 并自动序列化；`hdrStore` 只承载管线回报的档位与计时。
+3. **参数名避开 demo 自己的参数**：demoStore 的 `debug` 已被 demo 占用，所以链路调试视图叫 `hdrDebug`，否则两者互相覆盖。
+4. **曝光只有一条路径**：导出 pass 不再缓存曝光值，改为每帧从 `PassContext.exposureEV` 读，避免两处状态不同步。
+5. **曲线图裁剪而非 clamp**：若 clamp 纵坐标，直通参照线会被折出一条假的「肩部」，误以为已经压过平了。
+6. **未实现状态要可见**：曲线未实现时图上标「曲线未实现（见 toneCurves.ts）」并把线画成告警色 —— 让「还没做」在界面上可辨认，而不是看起来像做坏了。
+
+### 踩坑与修复
+
+1. **HUD 的「两行」结构导致面板溢出画布**
+   - 现象：加上曲线图后，左下面板列高 668px，而画布只有 504px（视口 720 → stage = min(70vh, 680) = 504），底部溢出 455px。
+   - 走了两个弯路：先给底部插槽加 `max-height: 46vh`（溢出降到 174px，未解决）；
+     再加 `.hud-row { flex-shrink: 0 }`（数值**一点没变**）。
+   - 真正原因（靠打印 `getBoundingClientRect` + `getComputedStyle` 量出来，不要靠心算）：
+     上下两行的高度**互相拖累** —— 右上角性能面板 310px 把顶行撑到 334px，底行 355px，
+     两行相加 689px > 504px，行被 flex 压缩而插槽不缩，插槽便溢出到行外。
+   - 修复：`Hud` 从「两行」重构为「左右两列」，任一侧长高不再影响另一侧的底部对齐；插槽改为可收缩 + 内部滚动。
+   - 顺带修正取证方式：截图前先 `scrollIntoViewIfNeeded()`，否则 `.stage` 底部在折叠线以下会被裁掉，
+     看到的「溢出」可能只是截图裁剪（这次 455px 是真溢出，但差点被这个假象带偏）。
+2. **Playwright 的 viewport 被 project 覆盖**：`devices['Desktop Chrome']` 自带 1280×720，
+   会盖掉顶层 `use.viewport` 的 800。按 800 算 vh 一直对不上，实际是 720。
+3. **受控 range 输入不能直接 fill**：React 受控 `<input type="range">` 需走原生 value setter + 派发 `input` 事件，已封装为 `setRangeValue`。
+4. **HUD 里出现第二个 `<canvas>`**：曲线图让 `page.locator('canvas')` 命中两个元素，e2e 里所有截图与可见性断言都要 `.first()` 锁定 WebGL 画布。
+
+### 验证
+
+`npm run smoke`（4 用例全绿）：
+
+| 检查项 | 结果 |
+| --- | --- |
+| console error / pageerror | 0 |
+| RT 档位 | RGBA16F |
+| 画面非空 | 亮度标准差 40.79 |
+| 自建链 vs 直出像素 A/B | 平均差 0.036、最大差 33、差异 > 8 的像素 0.206% |
+| **HUD 不溢出画布** | 4 个插槽上下余量 `[13/452, 72/13, 13/181, 457/13]`，全部 ≥ 0 |
+| **S2 参数进 URL** | `?speed=0&tm=aces&ev=-2`；用该 URL 重开，控件正确回填 |
+
+截图：`e2e/screenshots/`（`00-panel.png` 面板全貌、`06-curve-todo.png` 曲线未实现状态）。
+
+### 遗留 / 下一步 —— **等你来做的三件事**
+
+1. 实现 `src/core/postfx/toneCurves.ts` 里的 `reinhardCurve` / `acesCurve` / `agxCurve`
+   （建议顺序 Reinhard → ACES → AgX；每个函数的要求写在文件里）
+2. 在 `src/core/postfx/passes/TonemapOutputPass.ts` 的 `tonemap()` 里写对应 GLSL（三个分支已留好）
+3. 决定「过曝回收」怎么呈现（该文件 `main()` 里列了两种低成本做法：加 `uClipView` 开关，或新增一个 clip-view pass），
+   并把理由记进本文件
+
+做完第 2 项后，把 `src/site/demos.ts` 里 `hdr` 条目的状态从 `planned` 改成 `wip`。
+
+---
+
 ## 2026-09-28 · p0-hdr 步骤 1 重构：链路抽象化 + R3F flat 修正 + Playwright 冒烟
 
 ### 目标

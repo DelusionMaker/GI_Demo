@@ -564,21 +564,36 @@ code {
   position: absolute;
   inset: 0;
   display: flex;
-  flex-direction: column;
   justify-content: space-between;
+  align-items: stretch;
+  gap: 12px;
+  padding: 12px;
   pointer-events: none;
 }
 
-.hud-row {
+/**
+ * 左右两列各自独立。
+ *
+ * 早期用的是「上下两行」结构，结果是两行的高度互相拖累：
+ * 右上角性能面板一长高，就把左下角面板整体推下去、盖出画布底部。
+ * 改成两列后，任一侧长高都不再影响另一侧的底部对齐。
+ * e2e 里有对应的布局断言在守这条不变量。
+ */
+.hud-col {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  max-width: min(430px, 48vw);
+}
+
+.hud-col-end {
+  align-items: flex-end;
 }
 
 .hud-spacer {
   flex: 1 1 auto;
+  min-height: 0;
 }
 
 .hud-slot {
@@ -586,15 +601,31 @@ code {
   flex-direction: column;
   gap: 10px;
   pointer-events: auto;
-  max-width: min(430px, 48vw);
+  /**
+   * 面板会越堆越多（HDR 链路 + 曲线图 + 参数 …）：
+   * 允许收缩并内部滚动，而不是把画布撑破。
+   */
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .hud-slot:empty {
   pointer-events: none;
 }
 
-.hud-slot-end {
-  align-items: flex-end;
+.hud-slot::-webkit-scrollbar {
+  width: 6px;
+}
+
+.hud-slot::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 3px;
+}
+
+.hud-slot::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .hud-title {
@@ -662,8 +693,7 @@ code {
   flex-direction: column;
   gap: 2px;
   padding: 10px 12px 12px;
-  max-height: 42vh;
-  overflow-y: auto;
+  /* 滚动交给 .hud-slot 统一处理，避免出现嵌套滚动容器 */
 }
 
 .panel-note {
@@ -821,6 +851,30 @@ code {
   color: var(--ink-3);
 }
 
+/* ---------- 色调映射曲线图 ---------- */
+
+.curve-graph {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 0 2px;
+  margin: 2px 0;
+}
+
+.curve-graph canvas {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.curve-graph-note {
+  font-size: 10px;
+  color: var(--ink-3);
+  text-align: center;
+  line-height: 1.5;
+}
+
 /* ---------- 空状态 ---------- */
 
 .missing {
@@ -849,13 +903,13 @@ code {
     min-height: 320px;
   }
 
-  .hud-slot {
-    max-width: none;
-  }
-
-  .hud-row {
+  .hud {
     padding: 8px;
     gap: 8px;
+  }
+
+  .hud-col {
+    max-width: none;
   }
 
   .perf-panel {
@@ -864,10 +918,6 @@ code {
 
   .perf-metric {
     flex-basis: 50%;
-  }
-
-  .panel-body {
-    max-height: 34vh;
   }
 
   .card-grid {
@@ -881,12 +931,17 @@ code {
 }
 
 @media (max-width: 620px) {
-  .hud-row {
+  /* 窄屏放不下两列：改为上下堆叠，两列各自收缩 + 内部滚动 */
+  .hud {
     flex-direction: column;
-    align-items: stretch;
+    gap: 6px;
   }
 
-  .hud-slot-end {
+  .hud-col {
+    max-width: none;
+  }
+
+  .hud-col-end {
     align-items: flex-start;
   }
 }
