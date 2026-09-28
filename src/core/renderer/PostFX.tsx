@@ -1,27 +1,44 @@
-import type { ReactNode } from 'react'
-import { HDRDriver } from '../postfx/HDRDriver'
+import { useThree } from '@react-three/fiber'
+import { useEffect, useState } from 'react'
+import type * as THREE from 'three'
+import { Pipeline } from './Pipeline'
+import { PipelineDriver } from './PipelineDriver'
+import { renderStore } from './renderStore'
+import { DisplayPass } from './passes/DisplayPass'
+import { ScenePass } from './passes/ScenePass'
+
+/** 默认链路：场景 → HDR 目标 → 呈现。色调映射 / bloom 在 S2、S4 插入中间。 */
+function createDefaultPipeline(renderer: THREE.WebGLRenderer): Pipeline {
+  const pipeline = new Pipeline(renderer)
+  pipeline.addPass(new ScenePass())
+  pipeline.addPass(new DisplayPass())
+  return pipeline
+}
 
 /**
- * 后处理链的插槽（p0-hdr 落地点）。必须渲染在 <Canvas> 内部。
+ * 自建 pass 链的宿主，必须放在 `<Canvas>` 内部（需要拿到 R3F 的 renderer）。
  *
- * 当前链（p0-hdr 步骤 1）：
- *   HDRDriver：场景 → RGBA16F HDR RT（含 DepthTexture / MSAA）
- *   → 全屏曝光直通 pass（手写线性→sRGB 编码）→ canvas
- *
- * 后续按 p0-hdr / p0-gbuffer-hud 依次插入：
- *   2. 自写色调映射：ACES / AgX / Reinhard 可切换 + 曲线图
- *   3. 物理 bloom：半分辨率 mip 链下采样再上采样
- *   4. 自动曝光：亮度 mip 测光 + 跨帧异步回读 + EV 语义
- *
- * 注意：HDRDriver 以 renderPriority=1 接管了 R3F 自动渲染，
- * 且依赖 createRenderer 中 toneMapping = NoToneMapping，
- * 否则会和后处理链重复做一次映射（画面发灰的常见原因）。
+ * 生命周期刻意用「effect 内创建 + state 持有」而不是 useMemo：
+ * StrictMode 下 effect 会执行 mount → cleanup → mount，
+ * 若把实例 memo 住，第一次 cleanup 里的 dispose 会让它永久失效（画面全黑）。
+ * 每次 effect 重建实例可彻底避开这个坑。
  */
-export function PostFX({ children }: { children?: ReactNode }) {
-  return (
-    <>
-      {children}
-      <HDRDriver />
-    </>
-  )
+export function PostFX() {
+  const gl = useThree((state) => state.gl)
+  const [pipeline, setPipeline] = useState<Pipeline | null>(null)
+
+  useEffect(() => {
+    const renderer = gl as unknown as THREE.WebGLRenderer
+    const instance = createDefaultPipeline(renderer)
+    setPipeline(instance)
+    renderStore.registerPipeline(instance)
+
+    return () => {
+      renderStore.unregisterPipeline()
+      instance.dispose()
+    }
+  }, [gl])
+
+  if (!pipeline) return null
+  return <PipelineDriver pipeline={pipeline} />
 }

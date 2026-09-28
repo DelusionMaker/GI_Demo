@@ -8,6 +8,7 @@ import { createDemoStore } from '@/core/controls/demoStore'
 import { Hud, HudHint, HudTitle } from '@/core/hud/Hud'
 import { PerfPanel } from '@/core/perf/PerfPanel'
 import { CanvasRoot } from '@/core/renderer/CanvasRoot'
+import { PipelinePanel } from '@/core/renderer/PipelinePanel'
 import { SceneAsset } from '@/core/scene/SceneAsset'
 import type { SceneId } from '@/core/scene/scenes'
 import type { DemoModule } from '../types'
@@ -155,9 +156,19 @@ const Stage = observer(function Stage() {
       </CanvasRoot>
 
       <Hud
-        topLeft={<HudTitle title="hello-cube" subtitle="p0-base 冒烟测试：验证骨架全链路" />}
+        topLeft={
+          <HudTitle
+            title="hello-cube"
+            subtitle="自建 pass 冒烟测试：场景 → HDR 目标 → 呈现（S1 直通）"
+          />
+        }
         topRight={<PerfPanel />}
-        bottomLeft={<DemoControls />}
+        bottomLeft={
+          <>
+            <PipelinePanel />
+            <DemoControls />
+          </>
+        }
         bottomRight={<HudHint>{CAMERA_HELP}</HudHint>}
       />
     </div>

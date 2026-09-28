@@ -27,8 +27,15 @@ src/
     capabilities.ts     # 运行时渲染能力 / 后端档位 store（MobX）
     renderer/
       createRenderer.ts # 后端唯一分叉点（当前 WebGL2；阶段 4 在此切 WebGPU）
-      CanvasRoot.tsx    # 统一 R3F Canvas 封装（DPR 上限、性能探针）
-      PostFX.tsx        # 后处理链插槽（p0-hdr 在此接 HDR + 色调映射）
+      CanvasRoot.tsx    # 统一 R3F Canvas 封装（DPR 上限、flat、挂载 PostFX）
+      Pass.ts           # Pass / PassContext 类型契约
+      Pipeline.ts       # 自建多 pass 管线（无 React 依赖）
+      FullscreenQuad.ts # 全屏三角形 + 通用顶点着色器
+      passes/           # 各 pass 实现（ScenePass / DisplayPass，色调映射与 bloom 后续插入）
+      PostFX.tsx        # pass 链宿主，必须挂在 Canvas 内
+      PipelineDriver.tsx# Pipeline ↔ R3F 的唯一接触点（尺寸 / 帧驱动 / 统计回传）
+      PipelinePanel.tsx # HUD 面板：HDR 档位 / 旁路 / 调试视图
+      renderStore.ts    # 链路的 UI 侧状态（MobX，5Hz 采样）
     camera/CameraRig.tsx # 预设视角 + 自动巡航 + 轨道操作
     controls/            # ControlPanel 组件 + DemoStore（MobX，URL 状态序列化）
     hud/Hud.tsx          # 四角插槽 HUD 容器
@@ -43,6 +50,26 @@ src/
   site/                 # 首页卡片、demo 页模板、元数据
   styles/global.css     # 全站样式（flex 布局）
 ```
+
+## 渲染链路（自建 pass）
+
+渲染由自建多 pass 管线接管，**不依赖 EffectComposer**：
+
+```
+scene ──► ScenePass ──► DisplayPass ──► 屏幕
+             │               │
+      RGBA16F 目标      线性 → 输出色彩空间编码
+   未编码的线性值 · MSAA 4x
+```
+
+- `CanvasRoot` 始终挂载 `<PostFX />`，由它用 `useFrame(priority > 0)` 关闭 R3F 的自动渲染并接管本帧渲染。**移除 `<PostFX />` 会导致画布全黑。**
+- `<Canvas flat>` 关闭 R3F 默认的 ACESFilmic 色调映射 —— 色调映射归自建链负责，否则会与后处理链重复映射（画面发灰）。
+- `Pipeline` 及 `passes/` **不得 import React**；React 侧只通过 `PipelineDriver` 驱动帧、同步尺寸与开关，方向始终单向。
+- `renderer.info.autoReset` 由 Pipeline 改为手动管理：three 在**每次** `render()` 调用时都会清零统计，多 pass 下不处理的话性能面板只能看到最后一个全屏 pass 的 1 个 draw call。
+- 渲到 RenderTarget 时 three 强制 `LinearSRGBColorSpace` 输出（不做 sRGB 编码），这是 HDR 链的前提；编码只在链尾 `DisplayPass` 发生一次。
+- HUD 的「渲染链路」面板提供 HDR 档位标注、旁路开关（与场景直出做 A/B）、调试视图下拉（把链路截断到某个 pass）。
+
+当前进度：S1（直通）已完成，色调映射在 S2、bloom 在 S4 接入。详见 `TODO.md` 的「三、p0-hdr 拆解」。
 
 ## 状态管理（MobX）
 
@@ -89,4 +116,5 @@ class FooStore {
 ## 当前状态
 
 骨架（p0-base）已落地，含一个 `hello-cube` 冒烟 demo 验证全链路。
+自建 pass 链（p0-hdr / S1）已接通：场景 → RGBA16F 目标 → 呈现，色调映射与 bloom 尚未接入。
 已实现的方向在 `TODO.md` 中勾选；其余条目在站点上明确标注为「规划中」。

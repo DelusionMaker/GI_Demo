@@ -1,12 +1,16 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect } from 'react'
 import { capabilitiesStore } from '../capabilities'
+import { renderStore } from '../renderer/renderStore'
 import { perfStore } from './perfStore'
 
 /**
  * 性能面板（文档「每个 demo 必备八块内容」第 6 条）。
- * 数据源是 PerfStore（5Hz 采样），因此这里可以写成普通 observer 组件 ——
- * 每帧采集发生在画布内的 PerfProbe，不会引发这里的重渲染。
+ *
+ * 数据来源全部是 5Hz 采样的 observable：
+ * - PerfStore ← 画布内 PerfProbe 每帧写入的 perfStats
+ * - RenderStore ← Pipeline 每帧写入的 pass 统计
+ * 因此本组件可以写成普通 observer 组件，不会随帧率重渲染。
  */
 export const PerfPanel = observer(function PerfPanel() {
   useEffect(() => {
@@ -15,6 +19,7 @@ export const PerfPanel = observer(function PerfPanel() {
   }, [])
 
   const caps = capabilitiesStore
+  const stats = renderStore.passStats
 
   return (
     <div className="panel perf-panel">
@@ -34,6 +39,23 @@ export const PerfPanel = observer(function PerfPanel() {
           hint={perfStore.gpuMs === null ? '待接计时扩展' : undefined}
         />
       </div>
+
+      {stats.passes.length > 0 ? (
+        <div className="perf-passes">
+          {stats.passes.map((pass) => (
+            <div className="perf-pass-row" key={pass.name}>
+              <span className="perf-key">{pass.name}</span>
+              <span className="perf-val-sm">{pass.ms.toFixed(2)} ms</span>
+            </div>
+          ))}
+          <div className="perf-pass-row perf-pass-total">
+            <span className="perf-key">链路合计</span>
+            <span className="perf-val-sm">{stats.totalMs.toFixed(2)} ms</span>
+          </div>
+          <div className="perf-pass-note">CPU 侧计时 · GPU 时间待接（p0-gbuffer-hud）</div>
+        </div>
+      ) : null}
+
       <div className="panel-note">
         浮点 RT {caps.colorBufferFloat ? '✓' : '✗'} · 浮点线性过滤{' '}
         {caps.floatLinear ? '✓' : '✗'} · 计时扩展 {caps.timerQuery ? '✓' : '✗'}

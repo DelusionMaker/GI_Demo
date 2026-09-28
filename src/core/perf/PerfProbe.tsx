@@ -4,16 +4,19 @@ import { recordFrame } from './perfStats'
 /**
  * 必须在 <Canvas> 内部。每帧把渲染统计写入非响应式单例。
  *
- * renderPriority = 2：必须晚于 HDRDriver（priority 1）执行。
- * 管线在帧首手动 renderer.info.reset() 后连续提交 beauty 与全屏 pass，
- * 只有在管线之后读到的 calls / triangles 才是整帧累计值。
+ * priority 必须高于 PipelineDriver(1)：useFrame 按 priority 升序执行，
+ * 排在自建 pass 链之后才能读到本帧真实的 draw call。
+ * 另外任意 priority > 0 都会关闭 R3F 的自动渲染 —— 与 PipelineDriver 的意图一致。
  */
+const PROBE_PRIORITY = 2
+
 export function PerfProbe() {
   useFrame((state, delta) => {
     const gl = state.gl as unknown as {
       info: { render: { calls: number; triangles: number } }
     }
     recordFrame(delta * 1000, gl.info.render.calls, gl.info.render.triangles, state.viewport.dpr)
-  }, 2)
+  }, PROBE_PRIORITY)
+
   return null
 }

@@ -24,7 +24,7 @@
 
 ### 风险与已知偏差
 
-- **与手册建议的偏差**：手册 3.5 建议「复杂多 pass 页用 vanilla three」。本项目按用户要求统一走 R3F。缓解方式：渲染核心保持与 React 无关的 module/class，React 只负责挂载与 UI，避免 reconciler 与自建多 pass 管线互相打架。
+- **与手册建议的偏差**：手册 3.5 建议「复杂多 pass 页用 vanilla three」。本项目按用户要求统一走 R3F。缓解方式：渲染核心保持与 React 无关的 module/class，React 只负责挂载与 UI，避免 reconciler 与自建多 pass 管线互相打架。**该缓解方案在 p0-hdr 落地时正式执行，见「三」的方案 A。**
 - **`onBeforeCompile` 脆弱**：依赖 three 内部 chunk 命名，必须锁 three 版本、集中管理注入点、加冒烟测试（手册 3.7）。
 - **构建体积**：当前产物 1.29 MB（gzip 368 kB，含 MobX）。后续用 `manualChunks` 拆出 three，并按需对 demo 做 code-split。
 - **MobX 7 是新主版本**：注解值必须是 `Annotation` 对象（v6 允许的 `"action.bound"` 字符串写法已失效），绑定动作改用 `actionBound`。新增 store 时不要照抄 v6 示例。
@@ -46,7 +46,7 @@ npm run build      # 生产构建
 
 - [~] **p0-base** 搭建渲染框架 + 构建部署 + 可复用 demo 模板 —— **骨架已落地**
   - [x] Vite + TS + React + R3F 工程与构建部署配置（含 `@/*` 别名、DPR 上限、sourcemap）
-  - [x] `@/core` 共享基建：store / capabilities / createRenderer（后端单点分叉）/ CanvasRoot / PostFX 插槽
+  - [x] `@/core` 共享基建：capabilities / createRenderer（后端单点分叉）/ CanvasRoot / PostFX 插槽 / MobX store 层
   - [x] **CameraRig**：2 个预设视角 + 自动巡航 + 轨道操作 + 键盘（数字键切预设、空格切巡航）
   - [x] **控制面板**组件：Panel（可折叠）/ Slider / Toggle / Select / Button
   - [x] **demoStore**：参数序列化进 URL query，只记录与默认值不同的项（可直接分享复现）
@@ -58,7 +58,7 @@ npm run build      # 生产构建
   - [ ] 多级降级路径骨架（WebGPU → WebGL2 → 烘焙结果 → 视频）→ p5-final 补完
   - [ ] 截图 / 录制工具接口（封面 GIF + 视觉回归）→ eng-shared 接入
   - [ ] monorepo 拆分 → eng-shared
-- [ ] **p0-hdr** HDR 管线与色调映射（ACES / AgX、自动曝光、物理 bloom）
+- [ ] **p0-hdr** HDR 管线与色调映射（ACES / AgX、自动曝光、物理 bloom）　**← 下一步，拆解见「三」**
 - [ ] **p0-gbuffer-hud** G-buffer MRT + 性能 HUD（帧时间 / 各 pass 耗时 / GPU 计时）
 - [ ] **p0-assets** 准备 3 个场景资产（Cornell box / 室内 / 户外）
 
@@ -93,7 +93,225 @@ npm run build      # 生产构建
 
 ---
 
-## 三、参考：规划约束
+## 三、p0-hdr 拆解（下一步）
+
+### 3.0 目标与验收定位
+
+**这一轮的目标不是「画面变好看」，而是让项目最核心的技术主张落地：自建 pass + 自写 shader。**
+
+现状事实（动手前先认清）：
+
+| 已就位 | 仍然是零 |
+| --- | --- |
+| 工程脚手架、构建部署、R3F 封装 | **自建多 pass 管线**（全项目零 `WebGLRenderTarget` / `setRenderTarget`） |
+| 相机装置、控制面板、URL 序列化、MobX store 层 | **一行自写 shader**（`hello-cube` 用的是内置 `meshStandardMaterial` + 内置灯） |
+| 能力探测（`colorBufferFloat` / `floatLinear` / `timerQuery` 已在探测） | `PostFX.tsx` 定义了但从未被挂载（纯 stub） |
+
+**为什么先做这一项：**
+
+1. 它是文档推荐主线的第 1 环（HDR/色调映射底座 → PBR+IBL → 阴影 → 烘焙 → SSGI → 深水区）。
+2. 它是唯一一个**能强制把 pass 框架带出来**的任务。后面所有东西（G-buffer、Clustered、SSGI、降噪、VXGI）都要挂在这条链上；现在建对，比阶段 3 重构便宜百倍。
+3. **可独立验证**（命中筛选标准第 1 条）：曲线可画出来对照、过曝回收可用 EV 阶梯验证、直方图可回读。
+4. 工作量小（2–3 天），架构收益最大。
+
+**前置依赖已就绪**：能力探测、`PostFX` 插槽、`perfStore` 5Hz 采样都已具备。**本轮不需要改动 store 层**（除给 HDR 参数加一个 `createDemoStore`）。
+
+---
+
+### 3.1 动手前必须先定的架构决策：Pipeline 与 React 的边界
+
+手册 3.5 / 3.7 警告过「R3F 的 reconciler 与顺序敏感的自建多 pass 管线容易打架」，`p0-hdr` 正是这个矛盾第一次爆发的地方（要在一个 `useFrame` 里接管渲染顺序）。
+
+- **方案 A（采纳）**：pass 链写成**与 React 无关的模块** —— `Pipeline` 类，只依赖 `WebGLRenderer` / `Scene` / `Camera`，暴露 `render()`；React 侧仅用 `useFrame(..., priority)` 驱动它，并把参数同步进去。
+  - 收益：可脱离 React 单测；阶段 4 切 WebGPU 时不用动；`onBeforeCompile` 类脆弱注入能集中管理。
+- 方案 B（否决）：用 `@react-three/postprocessing` / `postprocessing` 生态库。快，但与「自写 shader」诉求冲突，且多 pass 顺序不好控 —— 会削弱作品集最该展示的部分。
+
+**硬约束：`src/core/renderer/Pipeline.ts` 及其 passes 目录下不得 `import` 任何 React 相关模块。**
+
+---
+
+### 3.2 Pipeline 接口签名（目标形态）
+
+```ts
+// src/core/renderer/Pipeline.ts —— 与 React 完全无关
+import type * as THREE from 'three'
+
+export type TargetFormat = 'RGBA16F' | 'RGBA8'
+
+export interface PassContext {
+  renderer: THREE.WebGLRenderer
+  scene: THREE.Scene
+  camera: THREE.Camera
+  /** 已按 DPR 换算的像素尺寸 */
+  width: number
+  height: number
+  /** 帧序号：供时域抖动 / 蓝噪声 / 隔帧异步回读使用 */
+  frame: number
+  /** 上一帧生效的曝光值（EV）。自动曝光有 1 帧延迟，这是有意为之 */
+  exposure: number
+}
+
+export interface Pass {
+  readonly name: string
+  /** 由控制面板 / URL 参数驱动 */
+  enabled: boolean
+  /** 分辨率缩放：1 = 全分辨率，0.5 = 半分辨率（ray march / bloom 用） */
+  scale: number
+  /** 'scene' = 把场景直接渲进本环；'prev' = 取上一环输出 */
+  source: 'scene' | 'prev'
+  /** 对 RenderTarget 的格式需求，由 Pipeline 按需分配并复用 */
+  target: { format: TargetFormat; filter: 'linear' | 'nearest' }
+  setup?(ctx: PassContext): void
+  /** 渲进 target 并返回本环输出纹理（通常是 target.texture） */
+  render(ctx: PassContext, target: THREE.WebGLRenderTarget): THREE.Texture
+  /** GPU 计时归因，由 p0-gbuffer-hud 接入后填充 */
+  lastGpuMs?: number
+  dispose(): void
+}
+
+export class Pipeline {
+  constructor(renderer: THREE.WebGLRenderer)
+
+  addPass(pass: Pass, index?: number): void
+  removePass(name: string): void
+  getPass<T extends Pass = Pass>(name: string): T | undefined
+
+  /** 按注册顺序执行。内部 ping-pong 复用 RenderTarget，禁止每帧新建 */
+  render(scene: THREE.Scene, camera: THREE.Camera): void
+  /** 尺寸 / DPR 变化时重建 RenderTarget；由 CanvasRoot 的 resize 事件驱动 */
+  resize(width: number, height: number, dpr: number): void
+
+  /** 中间量可视化：直接显示某个 pass 的输出；null = 走完整链 */
+  debugPass: string | null
+  /** 整条链旁路，用于 A/B 对比「改造前」的 8bit 直出路径 */
+  bypass: boolean
+
+  /** 各环耗时，供性能面板消费 */
+  readonly stats: { passes: Array<{ name: string; ms: number }>; totalMs: number }
+  dispose(): void
+}
+```
+
+配套文件：`src/core/renderer/FullscreenQuad.ts`（自写全屏三角/四边形 + `RawShaderMaterial` 基类，不引 three 的 pass 基类）、`src/core/renderer/passes/*.ts`。
+
+---
+
+### 3.3 Pass 顺序（p0-hdr 阶段）
+
+```
+scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色调映射
+       ──► ② luminance  ↓ 降采样 (scale 0.25) ──► 异步回读 → EV（1 帧延迟）
+       ──► ③ bloom      HDR 域内：阈值提取 → mip 链下采样 → 上采样相加 (scale 0.5)
+       ──► ④ tonemap    ACES / AgX / Reinhard 可切换 + EV → LDR RT (RGBA8, scale 1.0)
+       ──► ⑤ output     sRGB 编码 + 抖动 → 屏幕
+```
+
+| # | pass | source | scale | 目标格式 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| ① | `scene` | scene | 1.0 | RGBA16F | `renderer.toneMapping` 必须保持 `NoToneMapping` |
+| ② | `luminance` | prev | 0.25 | RGBA16F | log 平均亮度 → 自动曝光；**必须隔帧异步回读**，不得每帧 `readPixels` |
+| ③ | `bloom` | prev | 0.5 | RGBA16F | **在 tonemap 之前**（HDR 域内做才物理正确）；6–8 级 mip |
+| ④ | `tonemap` | prev | 1.0 | RGBA8 | 曲线 + 曝光，只做一次映射 |
+| ⑤ | `output` | prev | 1.0 | — | sRGB 编码 + 抖动，直接出屏 |
+
+**已知取舍（写进 demo 的 limitations）：** bloom 放在 tonemap 之前物理正确但更贵；若移动端吃紧，可挪到 tonemap 之后并如实标注这是 LDR 近似。
+
+---
+
+### 3.4 落地步骤（含每步验收点）
+
+| 步骤 | 内容 | 验收点 | 状态 |
+| --- | --- | --- | --- |
+| **S1** | `Pipeline` + `Pass` + `FullscreenQuad` 抽象；场景渲进 RGBA16F；`PostFX` 从直通改为挂载 Pipeline；`CanvasRoot` 接上 `flat` 与 resize | 画面与直出路径一致；HUD 显示 HDR 档位；不支持浮点时回落 RGBA8 并在 HUD 标注 | ✅ **代码完成**（浏览器内验证待补，见 3.4.1） |
+| **S2** | `passes/ToneMappingPass.ts`：ACES(fitted) / AgX / Reinhard；控制面板加算法下拉 + EV 滑杆；**曲线对照图**（canvas 2D 画 0..8 → 输出） | 三条曲线形状正确（Reinhard 无 shoulder、ACES 有 toe/shoulder、AgX 更陡）；EV 变化时整体亮度单调 | 0.5 天 |
+| **S3** | `passes/LuminancePass.ts`（降采样 + log 平均 + 异步回读）；直方图面板；「过曝回收」A/B 对比开关 | EV 从 −4 扫到 +4 时高光**不截断**（对比 8bit 路径的死白/色块）；直方图随 EV 平移；自动曝光 1–2 帧收敛、无可见振荡 | 1 天 |
+| **S4** | `passes/BloomPass.ts`：阈值 + 6–8 级 mip 下采样 + 上采样合成 | mip 链各级可缩略图可视化；关闭时高光边界硬、开启后柔和不糊；给出 bloom 的耗时占比 | 1 天（可拆到下一轮） |
+| **S5** | 收尾：`src/site/demos.ts` 的 `hdr` 条目 status → `done`，如实补 limitations（自动曝光迟滞、半精度暗部条带） | 站点上该 demo 不再显示「规划中」 | 0.5 天 |
+
+#### 3.4.1 S1 完成记录
+
+**交付物**
+
+| 文件 | 职责 |
+| --- | --- |
+| `renderer/Pass.ts` | `Pass` / `PassContext` / `PassTargetSpec` 类型契约 |
+| `renderer/FullscreenQuad.ts` | 全屏三角形 + 通用顶点着色器（uv 由位置推导，忽略所有矩阵） |
+| `renderer/Pipeline.ts` | 多 pass 调度、RenderTarget 池化复用、`info` 手工重置、debug 截断、bypass 路径。**无任何 React 依赖** |
+| `renderer/passes/ScenePass.ts` | 链首：场景 → HDR 目标（含 MSAA 补偿） |
+| `renderer/passes/DisplayPass.ts` | 链尾：呈现到屏幕（线性 → 输出色彩空间编码） |
+| `renderer/renderStore.ts` | 链路的 UI 侧状态（MobX），5Hz 采样 |
+| `renderer/PipelineDriver.tsx` | Pipeline ↔ R3F 的唯一接触点：尺寸、帧驱动、开关同步、统计回传 |
+| `renderer/PostFX.tsx` | pass 链宿主（改写自原 stub） |
+| `renderer/PipelinePanel.tsx` | HUD 面板：HDR 档位 / 旁路开关 / 调试视图下拉 |
+| `renderer/CanvasRoot.tsx`（改） | 加 `flat`、挂载 `<PostFX />` |
+| `perf/PerfProbe.tsx`（改） | priority 提到 2，保证在链路渲染之后采样 |
+| `perf/PerfPanel.tsx`（改） | 增加各 pass 耗时分解（CPU 侧） |
+
+**动手时核实过的 5 个运行时事实**（后续改动不要再重新踩）
+
+1. **R3F 会覆盖 `toneMapping`**：内部执行 `gl.toneMapping = flat ? NoToneMapping : ACESFilmicToneMapping`。因此必须在 `<Canvas>` 上传 `flat`，否则色调映射会与自建链重复。
+2. **`useFrame` 的 priority > 0 会关闭 R3F 自动渲染**：判据是 `if (!state.internal.priority && state.gl.render) state.gl.render(...)`，且订阅者按 priority **升序**执行 —— 所以链路用 1、`PerfProbe` 用 2。
+3. **`renderer.info.autoReset` 默认 true**，而 three 在**每次** `render()` 调用里都会重置统计。多 pass 下必须改为 `false` + 每帧手动重置一次，否则性能面板只能看到最后一个全屏 pass 的 1 个 draw call。
+4. **渲到 RenderTarget 时输出色彩空间被强制为 `LinearSRGBColorSpace`**（源码：`currentRenderTarget === null ? renderer.outputColorSpace : LinearSRGBColorSpace`），即写入的是**未编码的线性值** —— 这正是 HDR 链需要的输入。
+5. **MSAA 不会自动作用于 RenderTarget**，需显式 `samples`；three 在 `render()` 尾部自动 resolve 多重采样目标，所以下一环采样到的是已解析纹理。这也意味着渲染器的 `antialias: true` 在自建链下已无作用。
+
+**行为变更（预期内，需知悉）**
+
+加了 `flat` 之后，R3F 不再施加 `ACESFilmic` 色调映射，因此画面会比改造前**更亮、高光无 filmic 滚降**。这是「色调映射改由自建 pass 负责」这一锁定决策的直接结果 —— S2 把色调映射拿回自己手里后即恢复可控状态。`bypass` 开关对比的是「场景直出」与「自建链」，两者都是无色调映射，因此 A/B 是有意义的（预期仅有 16F 量化带来的亚像素差异）。
+
+---
+
+### 3.5 验收清单
+
+- [ ] `PostFX` 不再是直通，`CanvasRoot` 实际挂载了 `Pipeline`
+- [ ] 场景渲进 RGBA16F 目标；`colorBufferFloat` 为 false 时回落 RGBA8，且 HUD 显式标注当前档位
+- [ ] `renderer.toneMapping` 仍是 `NoToneMapping`，映射只在 pass 里发生**一次**（不得重复映射）
+- [ ] ACES / AgX / Reinhard 可切换，切换后画面变化与曲线形状一致
+- [ ] EV 滑杆生效，范围至少 −4 … +4
+- [ ] 「过曝回收」对比可演示：EV 阶梯下高光不截断
+- [ ] 直方图面板随 EV 平移（关闭自动曝光时）
+- [ ] 自动曝光可开关，1–2 帧收敛，无可见振荡
+- [ ] Bloom 可开关，mip 链各级可可视化，并给出耗时占比
+- [ ] `Pipeline` / passes 目录下**没有任何 React import**
+- [ ] 所有参数进 URL（`?ev=&tm=&bloom=&autoexposure=`），链接可直接复现
+- [ ] 性能面板仍是 5Hz 采样 —— 加了 pass 之后**不允许**退化成每帧重渲染
+- [ ] `npm run typecheck` 与 `npm run build` 通过
+- [ ] demo 元数据 status 改 `done`，limitations 如实填写
+
+---
+
+### 3.6 风险与注意事项
+
+- **R3F 与 pass 顺序**：严格按方案 A，`Pipeline` 与 React 解耦；React 只负责 `useFrame(priority)` 驱动与参数同步。
+- **`readPixels` 会 stall 管线**：直方图 / 自动曝光必须隔帧异步回读（WebGL2 无 PBO 时至少降低回读频率），否则帧率会被拉出周期性尖刺 —— 这本身就是一个可展示的性能故事。
+- **半精度条带**：RGBA16F 在极暗部会出现条带 → 在 `output` pass 加抖动（dither）缓解。
+- **浮点线性过滤**：`floatLinear` 为 false 时，mip 链下采样需手写双线性或改用 `NEAREST` 降采样策略；`capabilities` 已在探测该位。
+- **颜色空间**：不要把色调映射与 sRGB 编码混在同一个 pass 里调试 —— 这是画面发灰/过曝最常见的来源。`tonemap` 出 LDR，`output` 只做编码。
+- **移动端降级**：bloom mip 级数减半、luminance 降到 64×64 或更小、必要时整条链旁路回 8bit 直出，并在 HUD 标注。
+
+---
+
+### 3.7 配套建议（与本轮并行，半天）
+
+本会话已两次暴露同一个洞：MobX 迁移与 R3F `gl` 工厂签名都**只能验证到类型与构建层面，无法确认浏览器里真能跑**（环境无 Playwright，未擅自安装浏览器内核）。而 pass 重构恰恰是最容易「改完白屏」的改动。
+
+建议补一条 `npm run smoke`：启 dev server → 打开 `/d/hello-cube` → 断言无 console error + canvas 非空白（读像素）→ 存一张基线截图。它同时是：
+
+- 后续所有改动的安全网；
+- 文档「视觉回归与性能门禁」加分项的雏形（固定 seed 已有 `src/core/utils/random.ts`）。
+
+---
+
+### 3.8 本轮明确不做
+
+- **GPU 计时**：现在只有 1 个 pass，**没有可归因的对象**；等 pass 数 ≥ 3 时再做才有意义（推迟到 `p0-gbuffer-hud`）。
+- **PBR / 阴影 / SSGI**：底座没打通，做了还要返工。
+- **切 WebGPU**：阶段 4 定了深水区方向再在 `createRenderer.ts` 单点切。
+- **原生 WebGL2 原理复现页**：加分项，等主线有内容之后再做。
+
+---
+
+## 四、参考：规划约束
 
 ### 推荐主线组合（6 个成品）
 
