@@ -1,7 +1,7 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect } from 'react'
 import { capabilitiesStore } from '../capabilities'
-import { renderStore } from '../renderer/renderStore'
+import { hdrStore } from '../postfx/hdrStore'
 import { perfStore } from './perfStore'
 
 /**
@@ -9,7 +9,7 @@ import { perfStore } from './perfStore'
  *
  * 数据来源全部是 5Hz 采样的 observable：
  * - PerfStore ← 画布内 PerfProbe 每帧写入的 perfStats
- * - RenderStore ← Pipeline 每帧写入的 pass 统计
+ * - HdrStore ← HDRPipeline 每帧写入的各 pass 计时
  * 因此本组件可以写成普通 observer 组件，不会随帧率重渲染。
  */
 export const PerfPanel = observer(function PerfPanel() {
@@ -19,7 +19,7 @@ export const PerfPanel = observer(function PerfPanel() {
   }, [])
 
   const caps = capabilitiesStore
-  const stats = renderStore.passStats
+  const passTimes = hdrStore.passTimes
 
   return (
     <div className="panel perf-panel">
@@ -40,17 +40,17 @@ export const PerfPanel = observer(function PerfPanel() {
         />
       </div>
 
-      {stats.passes.length > 0 ? (
+      {passTimes.length > 0 ? (
         <div className="perf-passes">
-          {stats.passes.map((pass) => (
+          {passTimes.map((pass) => (
             <div className="perf-pass-row" key={pass.name}>
               <span className="perf-key">{pass.name}</span>
-              <span className="perf-val-sm">{pass.ms.toFixed(2)} ms</span>
+              <span className="perf-val-sm">{pass.cpuMs.toFixed(2)} ms</span>
             </div>
           ))}
           <div className="perf-pass-row perf-pass-total">
             <span className="perf-key">链路合计</span>
-            <span className="perf-val-sm">{stats.totalMs.toFixed(2)} ms</span>
+            <span className="perf-val-sm">{hdrStore.totalMs.toFixed(2)} ms</span>
           </div>
           <div className="perf-pass-note">CPU 侧计时 · GPU 时间待接（p0-gbuffer-hud）</div>
         </div>

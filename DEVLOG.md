@@ -9,6 +9,100 @@
 
 ---
 
+## 2026-09-28 · p0-hdr 步骤 1 重构：链路抽象化 + R3F flat 修正 + Playwright 冒烟
+
+### 目标
+
+把步骤 1 写死的「beauty + 全屏输出」两段链下沉为通用 `Pipeline` + 可插拔 `Pass`，
+为步骤 2/3/4 与 p0-gbuffer-hud 的 MRT 铺路；修正一处会让 HDR 失效的前置约束错误；
+补上浏览器内的自动化验证。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/Pass.ts` | 新建 | `Pass` / `PassContext` / `PassTargetSpec` / `PassTiming` 类型契约 |
+| `src/core/postfx/Pipeline.ts` | 新建 | 通用多 pass 调度：RT 池化复用（按 format/filter/samples/depth/尺寸 分池）、`info` 手工重置、调试截断、bypass |
+| `src/core/postfx/FullscreenQuad.ts` | 新建 | 全屏单三角形 + 通用顶点着色器；材质 `toneMapped = false` |
+| `src/core/postfx/passes/BeautyPass.ts` | 新建 | 链首（原 beauty 段），`samples: 4` + `DepthTexture` 沿用既有决策 |
+| `src/core/postfx/passes/TonemapOutputPass.ts` | 新建 | 链尾（原输出段），手写分段 sRGB + EV，曲线分支占位 |
+| `src/core/postfx/hdrStore.ts` | 新建 | 链路 UI 侧状态（MobX，5Hz 采样） |
+| `src/core/postfx/HDRPanel.tsx` | 新建 | HUD 面板：RT 档位 / 旁路 / 调试视图 |
+| `src/core/postfx/HDRPipeline.ts` | 重构 | 保留为门面，**公开 API 不变**（`hdrSupported` / `passTimes` / `setExposureEV` / `setTonemap` / `setSize` / `render` / `dispose`） |
+| `src/core/postfx/HDRDriver.tsx` | 改造 | 增补 store 注册、单向参数同步、5Hz 计时回传 |
+| `src/core/renderer/CanvasRoot.tsx` | 改造 | 加 **`flat`**（见踩坑 1） |
+| `src/core/perf/PerfPanel.tsx` | 改造 | 各 pass 计时分解（CPU 侧） |
+| `e2e/smoke.spec.ts`、`playwright.config.ts` | 新建 | Playwright 冒烟与像素级 A/B |
+
+### 关键设计决策
+
+1. **抽象层放在 `postfx/` 内，`HDRPipeline` 保留为门面**：公开 API 与本文档的记录全部不变，`HDRDriver` 只做最小增补 —— 历史连续、可追溯。
+2. **pass 命名沿用本文档步骤 1 的计时表**：`beauty` / `tonemap-output`。
+3. **Pipeline 构造函数不读 store**：浮点能力位由 `HDRPipeline` 从 `capabilitiesStore` 读出后以 `{ hdr }` 传入，渲染核心只依赖 three + `Pass` 契约，保持与状态层无关。
+4. **`dispose()` 刻意非终结**（只释放资源、不置死标记），原因见踩坑 2。
+5. **调试视图用「截断 + 复用链尾 pass 呈现」**：不引入额外 blit 材质，且走与正常出屏完全相同的色彩路径。
+6. **全屏几何从 `PlaneGeometry(2,2)` 换成单三角形**：没有对角线上的重复着色，且无需 uv 属性。
+7. **单向数据流**：UI 开关从 store 推进管线；渲染核心不感知 MobX，计时按 5Hz 反向回传。
+
+### 踩坑与修复
+
+1. **R3F 会覆盖 `toneMapping`（步骤 1 的前置约束有误）**
+   - 步骤 1 记录「依赖 createRenderer 中 toneMapping = NoToneMapping」，但 R3F 在 configure 阶段会执行
+     `gl.toneMapping = flat ? NoToneMapping : ACESFilmicToneMapping`，把 `createRenderer` 的设置覆盖掉。
+   - 后果：场景材质先做一次 ACES，写进 HDR RT 的已不是线性 HDR 值。步骤 1 看起来「画面正常」，
+     但步骤 2 的曲线会在已映射的数据上再映射一次 —— 属于会积累到后期才爆的错。
+   - 修复：`<Canvas flat>`。
+   - **代价（预期内）**：画面比之前更亮、高光没有 filmic 滚降；色调映射归自建链负责，步骤 2 接回后即可控。
+2. **StrictMode 下 dispose 后实例会被复用**
+   - `useMemo` 创建的实例会在 StrictMode 的 mount → cleanup → mount 中被 dispose，而 effect 重跑仍拿到同一实例。
+   - 原实现能「自愈」的原因：`dispose()` 只释放资源、没有置死标记，RT 在下次 `setRenderTarget` 时被惰性重建
+     （此前观察到的一次性 context lost info 与此有关）。
+   - 抽象化时**把这一点固化为设计**并在代码注释写明：`dispose()` 不是终结性的。
+3. **`Pass.lastGpuMs` 类型缺口**：GPU 计时位记在 `PassTiming.gpuMs`，但写入方是各 pass；
+   补 `Pass.lastGpuMs?: number` 由 Pipeline 汇总。
+4. **sRGB 编码方式的说法修正**：本文档步骤 1 决策 6 写「ShaderMaterial 全屏 quad 不会被 three 注入 `colorspace_fragment`」。
+   更准确的说法是：three **不会自动插入调用**，但会把 `linearToOutputTexel` 注入非 raw 材质的片元前缀，
+   因此 `#include <colorspace_fragment>` 实际可用。仍**保留手写分段编码** —— 它不依赖 three 内部 chunk 命名，
+   与「onBeforeCompile 依赖内部命名易碎」那条风险提示一致。
+
+### 验证（Playwright 首次接入）
+
+环境说明：本机访问 Playwright CDN 被挡（下载 45 秒 0 字节增长），改用系统已装的 Chrome 驱动
+（`playwright.config.ts` 的 `SMOKE_CHANNEL`，默认 `chrome`；CI 上建议 `npm run smoke:install` 后用 bundled 内核）。
+
+`npm run smoke` 实测：
+
+| 检查项 | 结果 |
+| --- | --- |
+| console error / pageerror | 0 |
+| RT 档位（HUD 标注） | **RGBA16F**（浮点目标确实生效） |
+| 画面非空 | 亮度均值 74.91、标准差 40.79（无黑屏） |
+| 逐 pass 计时表 | 存在（证明本帧确实提交了 pass） |
+| **自建链 vs 直出像素 A/B** | 平均差 **0.036**、最大差 **33**、差异 > 8 的像素 **0.206%** |
+| 分路证据 | 旁路时计时表消失 → 确认 bypass 分支真的执行（排除「开关没生效但两张图恰好一样」的假阳性） |
+
+A/B 数据判读：平均差 0.036/255 说明两条路径数值上基本重合；最大差 33 与那 0.206% 的差异像素集中在几何边缘，
+来源是 **MSAA 采样数不同**（自建链用 RT 的 `samples: 4`，直出用默认后缓冲）叠加 16F 量化。
+结论：接入后**视觉一致**，但不是逐字节一致（也不应期待逐字节一致）。
+
+截图产物在 `e2e/screenshots/`（已 gitignore）。
+
+### 遗留 / 下一步
+
+- **步骤 2**：`TonemapOutputPass` 内补 ACES(Narkowicz) / AgX / Reinhard 分支 + EV 滑杆 + 曲线图 + clamped-pixels 调试视图。
+  现在只需扩展一个 pass，不必动调度逻辑。
+- **步骤 3**：bloom 必须插在 tonemap **之前**（HDR 线性空间）；新增 pass 插到 `beauty` 与 `tonemap-output` 之间即可。
+- **步骤 4**：沿用原判断 —— 放弃片元直方图（WebGL2 片元无原子加），改 luminance mip 链 + 跨帧异步回读；
+  且**默认锁手动曝光**，以免破坏 Playwright 的确定性。
+- **p0-gbuffer-hud**：`BeautyPass` 已挂 `DepthTexture`，但 MSAA 下的可采样性仍未复核
+  （Pipeline 已通过 `PassContext.inputDepth` 把深度透出给后续 pass）。
+- **调试视图**目前只有 2 段链路，截断与完整链路视觉等价；pass 数 ≥ 3 后才具备可区分性，
+  `e2e` 中已把这一点写成显式断言与注释。
+- **教训（已写进 TODO.md）**：动手前先 `git log` / `git ls-files` 确认现状，
+  不要只凭一次代码搜索就断言「某能力为零」。
+
+---
+
 ## 2026-09-23 · p0-hdr 步骤 1：HDR 管线骨架 + R3F 接管渲染
 
 ### 目标

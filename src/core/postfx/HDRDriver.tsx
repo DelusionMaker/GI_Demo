@@ -1,6 +1,10 @@
 import { useFrame, useThree } from '@react-three/fiber'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { HDRPipeline } from './HDRPipeline'
+import { hdrStore } from './hdrStore'
+
+/** 统计推送节流：与 perfStore 的 5Hz 采样一致，避免每帧触发重渲染 */
+const STATS_INTERVAL_MS = 200
 
 /**
  * HDR 管线在 R3F 内的驱动组件（必须位于 <Canvas> 内）。
@@ -12,8 +16,8 @@ import { HDRPipeline } from './HDRPipeline'
  *   「场景 → HDR RT → 全屏 pass → canvas」；
  * - 卸载时释放 RT / 材质 / quad 几何。
  *
- * 不持有任何 demo 参数：曝光 EV、曲线模式等后续由控制面板经 store
- * 驱动，这里只保证管线存活与每帧提交。
+ * 参数同步方向是单向的：UI 开关（bypass / 调试视图）从 hdrStore 推进管线，
+ * 渲染核心不感知 MobX；逐 pass 计时反向按 5Hz 回传给 store 供面板展示。
  */
 export function HDRDriver() {
   const gl = useThree((state) => state.gl)
@@ -21,6 +25,7 @@ export function HDRDriver() {
   const camera = useThree((state) => state.camera)
   const size = useThree((state) => state.size)
   const dpr = useThree((state) => state.viewport.dpr)
+  const lastStatsPush = useRef(0)
 
   const pipeline = useMemo(
     () => new HDRPipeline(Math.round(size.width * dpr), Math.round(size.height * dpr)),
@@ -33,10 +38,26 @@ export function HDRDriver() {
     pipeline.setSize(Math.round(size.width * dpr), Math.round(size.height * dpr))
   }, [pipeline, size.width, size.height, dpr])
 
-  useEffect(() => () => pipeline.dispose(), [pipeline])
+  useEffect(() => {
+    hdrStore.register(pipeline.pipeline)
+    return () => {
+      hdrStore.unregister()
+      pipeline.dispose()
+    }
+  }, [pipeline])
 
   useFrame(() => {
+    const core = pipeline.pipeline
+    core.bypass = hdrStore.bypass
+    core.debugPass = hdrStore.debugPass
+
     pipeline.render(gl, scene, camera)
+
+    const now = performance.now()
+    if (now - lastStatsPush.current >= STATS_INTERVAL_MS) {
+      lastStatsPush.current = now
+      hdrStore.pushStats()
+    }
   }, 1)
 
   return null

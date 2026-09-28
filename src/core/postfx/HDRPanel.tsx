@@ -1,13 +1,16 @@
 import { observer } from 'mobx-react-lite'
 import { Panel, Select, Toggle, type SelectOption } from '../controls/ControlPanel'
-import { renderStore } from './renderStore'
+import { hdrStore } from './hdrStore'
 
 /**
- * 渲染链路的公共控制面板：所有 demo 共用。
- * 承载「降级路径必须显式标注」与「中间量可视化」两项文档要求。
+ * HDR 链路的公共控制面板：所有 demo 共用。
+ *
+ * 承载两项文档要求：
+ * - 「降级路径必须显式标注」：hdrSupported=false 时标红提示高光会截断
+ * - 「中间量可视化」：把链路截断到某个 pass 直接看其输出
  */
-export const PipelinePanel = observer(function PipelinePanel() {
-  const store = renderStore
+export const HDRPanel = observer(function HDRPanel() {
+  const store = hdrStore
   if (!store.pipelineActive) return null
 
   const options: SelectOption<string>[] = [
@@ -16,16 +19,16 @@ export const PipelinePanel = observer(function PipelinePanel() {
   ]
 
   return (
-    <Panel title="渲染链路">
+    <Panel title="HDR 链路">
       <div className="ctl-row">
-        <span className="ctl-label">HDR 目标</span>
+        <span className="ctl-label">RT 档位</span>
         <span className={`badge ${store.hdrActive ? 'badge-ok' : 'badge-warn'}`}>
-          {store.hdrActive ? store.hdrFormat : `${store.hdrFormat}（已回落）`}
+          {store.hdrActive ? store.hdrFormat : `${store.hdrFormat}（已降级）`}
         </span>
       </div>
       <Toggle
         label="旁路整条链"
-        hint="对比改造前的场景直出"
+        hint="对比接入前的场景直出"
         value={store.bypass}
         onChange={store.setBypass}
       />

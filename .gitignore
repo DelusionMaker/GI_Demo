@@ -8,6 +8,13 @@ dist-ssr
 .cache
 bake-out
 
+# Playwright：报告与失败产物不入库；冒烟截图是验证产物，同样不入库
+test-results
+playwright-report
+blob-report
+.playwright
+e2e/screenshots
+
 # editor
 .vscode/*
 !.vscode/extensions.json

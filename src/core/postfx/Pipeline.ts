@@ -1,10 +1,12 @@
 import * as THREE from 'three'
-import type { Pass, PassContext, PassStat, PassTargetSpec, TargetFormat } from './Pass'
-
-export interface PipelineStats {
-  passes: PassStat[]
-  totalMs: number
-}
+import type {
+  Pass,
+  PassContext,
+  PassTargetSpec,
+  PassTiming,
+  PipelineStats,
+  TargetFormat,
+} from './Pass'
 
 interface PooledTarget {
   key: string
@@ -12,31 +14,37 @@ interface PooledTarget {
   busy: boolean
 }
 
+export interface PipelineOptions {
+  /**
+   * 是否允许浮点渲染目标（由调用方判定，通常是 capabilities.colorBufferFloat）。
+   * 刻意不在 Pipeline 内读 store：渲染核心保持与状态层无关。
+   */
+  hdr: boolean
+}
+
 /**
- * 自建多 pass 管线。
+ * 通用多 pass 管线（p0-hdr 步骤 1 抽象出的容器）。
  *
- * 硬约束：本文件（以及 passes/ 目录）不得 import 任何 React 模块。
- * React 侧只负责用 useFrame 驱动 `render()` 与同步参数（见 PipelineDriver）。
- * 这样做的收益：可脱离 React 单测；阶段 4 切 WebGPU 时渲染核心不用重写。
+ * 硬约束：本文件与 passes/ 目录不得 import 任何 React / MobX 模块。
+ * React 侧只通过驱动组件在 useFrame 里调 `render()` 与同步参数。
  *
- * 顺序无关性：Pipeline 自己从 GL 上下文判定是否支持浮点目标，
- * 不读取 capabilities store —— 避免依赖 store 的初始化时机。
+ * 演进说明：`HDRPipeline` 原本是写死的「beauty + 全屏输出」两段；
+ * 抽出本类后，步骤 3（bloom 多级 mip）与步骤 4（luminance 链）
+ * 以及 p0-gbuffer-hud 的 MRT 都只需新增 pass，不必再改调度逻辑。
  */
 export class Pipeline {
-  // ---- 以下字段供 UI 读写，刻意保持为普通字段，不引状态库 ----
+  // ---- 供 UI 读写，保持为普通字段，不引状态库 ----
   /** 旁路整条链，走「场景直接渲到屏幕」的老路径，用于 A/B 对比 */
   bypass = false
   /** 中间量可视化：只跑到该 pass 为止，再借链尾 pass 呈现其输出 */
   debugPass: string | null = null
-  /** 曝光倍率（S3 接入自动曝光后由外部驱动） */
-  exposure = 1
+  /** 曝光偏移（EV） */
+  exposureEV = 0
 
-  /** 场景 pass 实际可用的目标格式（不支持浮点渲染目标时为 RGBA8） */
-  readonly hdrFormat: TargetFormat
-  /** 是否真的用上了浮点目标；false 表示高光会在写入时就被截断 */
+  /** 浮点目标是否真正生效（false = 已回落 RGBA8，高光会被截断） */
   readonly hdrActive: boolean
+  readonly hdrFormat: TargetFormat
 
-  private readonly renderer: THREE.WebGLRenderer
   private readonly passes: Pass[] = []
   private readonly pool: PooledTarget[] = []
   private readonly drawingBuffer = new THREE.Vector2()
@@ -45,14 +53,11 @@ export class Pipeline {
   private width = 0
   private height = 0
   private frame = 0
-  private disposed = false
+  private inputDepth: THREE.DepthTexture | null = null
 
-  constructor(renderer: THREE.WebGLRenderer) {
-    this.renderer = renderer
-    const gl = renderer.getContext()
-    const floatRenderable = Boolean(gl.getExtension('EXT_color_buffer_float'))
-    this.hdrActive = floatRenderable
-    this.hdrFormat = floatRenderable ? 'RGBA16F' : 'RGBA8'
+  constructor(options: PipelineOptions) {
+    this.hdrActive = options.hdr
+    this.hdrFormat = options.hdr ? 'RGBA16F' : 'RGBA8'
   }
 
   get stats(): PipelineStats {
@@ -79,21 +84,17 @@ export class Pipeline {
     return this.passes.map((pass) => pass.name)
   }
 
-  /** 由 React 侧在尺寸 / DPR 变化时调用；render() 内还会用 drawingBufferSize 复核一次 */
-  resize(width: number, height: number, dpr: number): void {
-    this.applyPixelSize(width * dpr, height * dpr)
+  /** 物理像素尺寸（CSS 尺寸 × DPR）。render() 内还会用 drawingBufferSize 复核一次。 */
+  setSize(width: number, height: number): void {
+    this.applyPixelSize(width, height)
   }
 
-  render(scene: THREE.Scene, camera: THREE.Camera): void {
-    if (this.disposed) return
-
-    const renderer = this.renderer
-
-    // 多 pass 场景必须关掉自动重置并改为每帧手动重置一次：
-    // three 的 render() 内部会执行 `if (info.autoReset) info.reset()`，
-    // 若保持默认，每渲染一个全屏 pass 就把统计清零，性能面板最终只能看到
-    // 最后一个 pass 的 1 个 draw call。
-    renderer.info.autoReset = false
+  /** 渲染器按帧传入（与 HDRPipeline 既有的 render(renderer, scene, camera) 签名保持一致） */
+  render(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): void {
+    // 关闭 info 自动清零：three 默认在每次 renderer.render 前 reset，
+    // 一帧内有 beauty + 多个全屏 pass 时，外部只能读到最后一个 pass 的
+    // 1 call / 2 tri。改为每帧开头手动 reset，累计整帧的 call / tri。
+    if (renderer.info.autoReset) renderer.info.autoReset = false
     renderer.info.reset()
     this.frame += 1
 
@@ -111,9 +112,10 @@ export class Pipeline {
 
     const chain = this.resolveChain()
     this.releaseAll()
+    this.inputDepth = null
 
     const frameStart = performance.now()
-    const stats: PassStat[] = []
+    const stats: PassTiming[] = []
 
     let input: THREE.Texture | null = null
     let heldTarget: THREE.WebGLRenderTarget | null = null
@@ -123,6 +125,8 @@ export class Pipeline {
       const height = Math.max(1, Math.round(this.height * pass.scale))
       const target = pass.toScreen ? null : this.acquire(pass, width, height)
 
+      if (target?.depthTexture) this.inputDepth = target.depthTexture
+
       const ctx: PassContext = {
         renderer,
         scene,
@@ -131,7 +135,8 @@ export class Pipeline {
         height,
         frame: this.frame,
         input,
-        exposure: this.exposure,
+        inputDepth: this.inputDepth,
+        exposureEV: this.exposureEV,
       }
 
       const passStart = performance.now()
@@ -145,9 +150,9 @@ export class Pipeline {
         output = pass.render(ctx, target)
       }
 
-      stats.push({ name: pass.name, ms: performance.now() - passStart })
+      stats.push({ name: pass.name, cpuMs: performance.now() - passStart, gpuMs: pass.lastGpuMs ?? null })
 
-      // 上一环的输出已被本环消费，立刻回收以便同签名的后续 pass 复用
+      // 上一环输出已被本环消费，立即回收，供同签名的后续 pass 复用
       if (heldTarget && heldTarget !== target) this.release(heldTarget)
       heldTarget = target
       input = output
@@ -159,23 +164,27 @@ export class Pipeline {
     this.statsRef.totalMs = performance.now() - frameStart
   }
 
+  /**
+   * 释放 GPU 资源。
+   *
+   * 注意：本方法**不是终结性的** —— 调用后对象仍可继续 render()，
+   * 渲染目标会在下次 render 时惰性重建。
+   * 这样设计是为了兼容 React StrictMode 的 mount → cleanup → mount：
+   * 若 dispose 置死标记，第二次挂载会拿到一个永久失效的实例（画面全黑）。
+   */
   dispose(): void {
-    if (this.disposed) return
-    this.disposed = true
     this.releaseAll(true)
     this.passes.forEach((pass) => pass.dispose())
     this.passes.length = 0
-    // 恢复 three 的默认统计行为
-    this.renderer.info.autoReset = true
   }
 
   /**
-   * 解析本帧实际要跑的链路。
-   * debugPass 采用「截断 + 复用链尾 pass 呈现」的方式实现，
-   * 因此不需要额外的 blit 材质，且走的是与正常出屏完全相同的色彩路径。
+   * 解析本帧实际链路。
+   * debugPass 用「截断 + 复用链尾 pass 呈现」实现：
+   * 不需要额外的 blit 材质，且走的是与正常出屏完全相同的色彩路径。
    */
   private resolveChain(): Pass[] {
-    let chain = this.passes.filter((pass) => pass.enabled)
+    const chain = this.passes.filter((pass) => pass.enabled)
     const debug = this.debugPass
     if (!debug) return chain
 
@@ -184,12 +193,9 @@ export class Pipeline {
 
     const truncated = chain.slice(0, index + 1)
     const screenPass = chain.find((pass) => pass.toScreen === true)
-    if (screenPass && !truncated.includes(screenPass)) {
-      chain = [...truncated, screenPass]
-    } else {
-      chain = truncated
-    }
-    return chain
+    return screenPass && !truncated.includes(screenPass)
+      ? [...truncated, screenPass]
+      : truncated
   }
 
   private applyPixelSize(width: number, height: number): void {
@@ -209,7 +215,8 @@ export class Pipeline {
   private acquire(pass: Pass, width: number, height: number): THREE.WebGLRenderTarget {
     const format = this.resolveFormat(pass.target.format)
     const samples = pass.target.samples ?? 0
-    const key = `${format}|${pass.target.filter}|${samples}|${width}x${height}`
+    const depth = pass.target.depthTexture ? 1 : 0
+    const key = `${format}|${pass.target.filter}|${samples}|${depth}|${width}x${height}`
 
     const free = this.pool.find((entry) => entry.key === key && !entry.busy)
     if (free) {
@@ -229,7 +236,10 @@ export class Pipeline {
 
   private releaseAll(dispose = false): void {
     if (dispose) {
-      this.pool.forEach((entry) => entry.target.dispose())
+      this.pool.forEach((entry) => {
+        entry.target.depthTexture?.dispose()
+        entry.target.dispose()
+      })
       this.pool.length = 0
       return
     }
@@ -248,17 +258,23 @@ function createRenderTarget(
   const hdr = format === 'RGBA16F'
   const filter = spec.filter === 'linear' ? THREE.LinearFilter : THREE.NearestFilter
 
+  const depthTexture = spec.depthTexture ? new THREE.DepthTexture(width, height) : undefined
+  if (depthTexture) depthTexture.format = THREE.DepthFormat
+
   const target = new THREE.WebGLRenderTarget(width, height, {
-    format: THREE.RGBAFormat,
     type: hdr ? THREE.HalfFloatType : THREE.UnsignedByteType,
+    format: THREE.RGBAFormat,
     minFilter: filter,
     magFilter: filter,
+    // RT 内保持线性，只在最终 pass 编 sRGB（显式写出，避免依赖默认值）
+    depthTexture,
     depthBuffer: true,
     stencilBuffer: false,
     generateMipmaps: false,
   })
-  // 构造后再赋值：three 的采样数在首次使用时惰性读取，这样写可避免依赖 options 的类型定义
+  // 构造后赋值：采样数在首次使用时惰性读取，这样写可避开 options 的类型定义差异
   target.samples = spec.samples ?? 0
-  target.texture.name = `gi-pipeline-${format}-${width}x${height}`
+  target.texture.colorSpace = THREE.NoColorSpace
+  target.texture.name = `gi-postfx-${format}-${width}x${height}`
   return target
 }

@@ -20,8 +20,8 @@ const QUAD_CAMERA = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
 let sharedGeometry: THREE.BufferGeometry | null = null
 
 /**
- * 单个全屏三角形的几何。相比两个三角形拼的四边形，
- * 没有对角线上的重复着色，且省一次顶点。
+ * 单个全屏三角形的几何。
+ * 相比 PlaneGeometry(2,2) 拼的四边形：没有对角线上的重复着色，且不需要 uv 属性。
  */
 function getSharedGeometry(): THREE.BufferGeometry {
   if (sharedGeometry) return sharedGeometry
@@ -35,11 +35,10 @@ function getSharedGeometry(): THREE.BufferGeometry {
 /**
  * 全屏 pass 的渲染载体。
  *
- * 使用 ShaderMaterial（而非 RawShaderMaterial）是有意为之：
- * 非 raw 材质会注入 three 的标准前缀，因此片元着色器里可以用
- * `#include <colorspace_fragment>` —— 它调用的 `linearToOutputTexel`
- * 与内置材质走同一条色彩空间转换函数，这是「自建链」与「场景直出」
- * 两条路径画面一致的前提。
+ * 说明：这里沿用「手写线性→sRGB 编码」而不是 `#include <colorspace_fragment>`。
+ * 后者虽然可用（three 会把 linearToOutputTexel 注入非 raw 材质的片元前缀），
+ * 但依赖 three 的内部 chunk 命名 —— 与 TODO.md 里记录的那条脆弱性一致，
+ * 因此输出 pass 自己掌握编码函数更稳。
  */
 export class FullscreenQuad {
   readonly material: THREE.ShaderMaterial
@@ -49,6 +48,8 @@ export class FullscreenQuad {
 
   constructor(material: THREE.ShaderMaterial) {
     this.material = material
+    // 自建输出不参与 three 的 tone mapping 注入（全局已是 NoToneMapping，双保险）
+    this.material.toneMapped = false
     this.mesh = new THREE.Mesh(getSharedGeometry(), material)
     this.mesh.frustumCulled = false
     this.scene.add(this.mesh)

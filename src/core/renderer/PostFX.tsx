@@ -1,44 +1,29 @@
-import { useThree } from '@react-three/fiber'
-import { useEffect, useState } from 'react'
-import type * as THREE from 'three'
-import { Pipeline } from './Pipeline'
-import { PipelineDriver } from './PipelineDriver'
-import { renderStore } from './renderStore'
-import { DisplayPass } from './passes/DisplayPass'
-import { ScenePass } from './passes/ScenePass'
-
-/** 默认链路：场景 → HDR 目标 → 呈现。色调映射 / bloom 在 S2、S4 插入中间。 */
-function createDefaultPipeline(renderer: THREE.WebGLRenderer): Pipeline {
-  const pipeline = new Pipeline(renderer)
-  pipeline.addPass(new ScenePass())
-  pipeline.addPass(new DisplayPass())
-  return pipeline
-}
+import type { ReactNode } from 'react'
+import { HDRDriver } from '../postfx/HDRDriver'
 
 /**
- * 自建 pass 链的宿主，必须放在 `<Canvas>` 内部（需要拿到 R3F 的 renderer）。
+ * 后处理链的插槽（p0-hdr 落地点）。必须渲染在 <Canvas> 内部。
  *
- * 生命周期刻意用「effect 内创建 + state 持有」而不是 useMemo：
- * StrictMode 下 effect 会执行 mount → cleanup → mount，
- * 若把实例 memo 住，第一次 cleanup 里的 dispose 会让它永久失效（画面全黑）。
- * 每次 effect 重建实例可彻底避开这个坑。
+ * 当前链（p0-hdr 步骤 1）：
+ *   HDRDriver：场景 → RGBA16F HDR RT（含 DepthTexture / MSAA）
+ *   → 全屏曝光直通 pass（手写线性→sRGB 编码）→ canvas
+ *
+ * 链路已下沉为通用 `Pipeline` + 可插拔 `Pass`（见 src/core/postfx/），
+ * 后续插入只需新增 pass、不必改调度逻辑：
+ *   2. 自写色调映射：ACES / AgX / Reinhard 可切换 + 曲线图
+ *   3. 物理 bloom：半分辨率 mip 链下采样再上采样（在 tonemap **之前**，HDR 线性空间）
+ *   4. 自动曝光：亮度 mip 测光 + 跨帧异步回读 + EV 语义
+ *
+ * ⚠️ 色调映射必须全局关闭，且**必须在 `<Canvas>` 上传 `flat`**：
+ *   R3F 在 configure 阶段会执行 `gl.toneMapping = flat ? NoToneMapping : ACESFilmicToneMapping`，
+ *   仅靠 createRenderer 里的设置会被覆盖。否则场景材质先做一次 ACES，
+ *   HDR RT 里存的就不再是线性 HDR 值，后续曲线会在已映射过的数据上再映射一次。
  */
-export function PostFX() {
-  const gl = useThree((state) => state.gl)
-  const [pipeline, setPipeline] = useState<Pipeline | null>(null)
-
-  useEffect(() => {
-    const renderer = gl as unknown as THREE.WebGLRenderer
-    const instance = createDefaultPipeline(renderer)
-    setPipeline(instance)
-    renderStore.registerPipeline(instance)
-
-    return () => {
-      renderStore.unregisterPipeline()
-      instance.dispose()
-    }
-  }, [gl])
-
-  if (!pipeline) return null
-  return <PipelineDriver pipeline={pipeline} />
+export function PostFX({ children }: { children?: ReactNode }) {
+  return (
+    <>
+      {children}
+      <HDRDriver />
+    </>
+  )
 }

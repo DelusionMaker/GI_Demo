@@ -8,7 +8,7 @@ import { createDemoStore } from '@/core/controls/demoStore'
 import { Hud, HudHint, HudTitle } from '@/core/hud/Hud'
 import { PerfPanel } from '@/core/perf/PerfPanel'
 import { CanvasRoot } from '@/core/renderer/CanvasRoot'
-import { PipelinePanel } from '@/core/renderer/PipelinePanel'
+import { HDRPanel } from '@/core/postfx/HDRPanel'
 import { SceneAsset } from '@/core/scene/SceneAsset'
 import type { SceneId } from '@/core/scene/scenes'
 import type { DemoModule } from '../types'
@@ -165,7 +165,7 @@ const Stage = observer(function Stage() {
         topRight={<PerfPanel />}
         bottomLeft={
           <>
-            <PipelinePanel />
+            <HDRPanel />
             <DemoControls />
           </>
         }

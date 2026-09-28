@@ -17,6 +17,7 @@ npm run dev        # 本地开发，默认 http://localhost:5173
 npm run typecheck  # 类型检查
 npm run build      # 生产构建（tsc --noEmit && vite build）
 npm run preview    # 预览构建产物
+npm run smoke      # Playwright 冒烟 + 像素级 A/B 验证（首次先跑 npm run smoke:install）
 ```
 
 ## 目录约定
@@ -28,14 +29,16 @@ src/
     renderer/
       createRenderer.ts # 后端唯一分叉点（当前 WebGL2；阶段 4 在此切 WebGPU）
       CanvasRoot.tsx    # 统一 R3F Canvas 封装（DPR 上限、flat、挂载 PostFX）
-      Pass.ts           # Pass / PassContext 类型契约
-      Pipeline.ts       # 自建多 pass 管线（无 React 依赖）
+      PostFX.tsx        # 后处理插槽：渲染 children + HDRDriver
+    postfx/
+      HDRPipeline.ts    # 门面：选 RT 格式 / 组装链路 / 公开 API（无 React 依赖）
+      Pipeline.ts       # 通用多 pass 调度、RT 池化复用、调试截断、bypass
+      Pass.ts           # Pass / PassContext / PassTiming 类型契约
       FullscreenQuad.ts # 全屏三角形 + 通用顶点着色器
-      passes/           # 各 pass 实现（ScenePass / DisplayPass，色调映射与 bloom 后续插入）
-      PostFX.tsx        # pass 链宿主，必须挂在 Canvas 内
-      PipelineDriver.tsx# Pipeline ↔ R3F 的唯一接触点（尺寸 / 帧驱动 / 统计回传）
-      PipelinePanel.tsx # HUD 面板：HDR 档位 / 旁路 / 调试视图
-      renderStore.ts    # 链路的 UI 侧状态（MobX，5Hz 采样）
+      passes/           # BeautyPass（链首，带 DepthTexture）/ TonemapOutputPass（链尾，手写 sRGB）
+      HDRDriver.tsx     # Pipeline ↔ R3F 唯一接触点（尺寸 / 帧驱动 / 开关同步 / 统计回传）
+      HDRPanel.tsx      # HUD 面板：RT 档位 / 旁路 / 调试视图
+      hdrStore.ts       # 链路 UI 侧状态（MobX，5Hz 采样）
     camera/CameraRig.tsx # 预设视角 + 自动巡航 + 轨道操作
     controls/            # ControlPanel 组件 + DemoStore（MobX，URL 状态序列化）
     hud/Hud.tsx          # 四角插槽 HUD 容器
@@ -56,20 +59,20 @@ src/
 渲染由自建多 pass 管线接管，**不依赖 EffectComposer**：
 
 ```
-scene ──► ScenePass ──► DisplayPass ──► 屏幕
-             │               │
-      RGBA16F 目标      线性 → 输出色彩空间编码
-   未编码的线性值 · MSAA 4x
+scene ──► BeautyPass ──► TonemapOutputPass ──► 屏幕
+             │                    │
+      RGBA16F 目标          曝光(EV) + 曲线 + 手写线性→sRGB
+ 未编码的线性值 · MSAA 4x · DepthTexture
 ```
 
-- `CanvasRoot` 始终挂载 `<PostFX />`，由它用 `useFrame(priority > 0)` 关闭 R3F 的自动渲染并接管本帧渲染。**移除 `<PostFX />` 会导致画布全黑。**
-- `<Canvas flat>` 关闭 R3F 默认的 ACESFilmic 色调映射 —— 色调映射归自建链负责，否则会与后处理链重复映射（画面发灰）。
-- `Pipeline` 及 `passes/` **不得 import React**；React 侧只通过 `PipelineDriver` 驱动帧、同步尺寸与开关，方向始终单向。
+- `CanvasRoot` 把 `<PerfProbe />` 与 demo 内容一起包进 `<PostFX>`，由 `HDRDriver` 用 `useFrame(priority 1)` 关闭 R3F 的自动渲染并接管本帧提交。**移除 `<PostFX>` / `<HDRDriver />` 会导致画布全黑。**
+- **`<Canvas flat>` 是必需的**：R3F 在 configure 阶段执行 `gl.toneMapping = flat ? NoToneMapping : ACESFilmicToneMapping`，只靠 `createRenderer` 里的设置会被覆盖。一旦被覆盖，场景材质先做一次 ACES，HDR RT 里存的就不是线性 HDR 值。
+- `Pipeline` 及 `passes/` **不得 import React / MobX**；React 侧只通过 `HDRDriver` 驱动帧、同步尺寸与开关，方向单向（UI → 管线），逐 pass 计时反向按 5Hz 回传给 `hdrStore`。
 - `renderer.info.autoReset` 由 Pipeline 改为手动管理：three 在**每次** `render()` 调用时都会清零统计，多 pass 下不处理的话性能面板只能看到最后一个全屏 pass 的 1 个 draw call。
-- 渲到 RenderTarget 时 three 强制 `LinearSRGBColorSpace` 输出（不做 sRGB 编码），这是 HDR 链的前提；编码只在链尾 `DisplayPass` 发生一次。
-- HUD 的「渲染链路」面板提供 HDR 档位标注、旁路开关（与场景直出做 A/B）、调试视图下拉（把链路截断到某个 pass）。
+- 渲到 RenderTarget 时 three 强制 `LinearSRGBColorSpace` 输出（不做 sRGB 编码），这是 HDR 链的前提；sRGB 编码只在链尾发生**一次**，且是手写分段函数（不依赖 three 内部 chunk 名）。
+- HUD 的「HDR 链路」面板提供 RT 档位标注（降级时标红）、旁路开关（与场景直出做 A/B）、调试视图下拉（把链路截断到某个 pass）。
 
-当前进度：S1（直通）已完成，色调映射在 S2、bloom 在 S4 接入。详见 `TODO.md` 的「三、p0-hdr 拆解」。
+当前进度：p0-hdr 步骤 1 已完成，色调映射在步骤 2、bloom 在步骤 3 接入。详见 `TODO.md` 的「三、p0-hdr 拆解」与 `DEVLOG.md`。
 
 ## 状态管理（MobX）
 

@@ -7,26 +7,36 @@ export interface PassContext {
   renderer: THREE.WebGLRenderer
   scene: THREE.Scene
   camera: THREE.Camera
-  /** 本环目标的像素尺寸（已乘 scale） */
+  /** 本环目标的物理像素尺寸（已乘 scale） */
   width: number
   height: number
   /** 帧序号：供时域抖动 / 蓝噪声 / 隔帧异步回读使用 */
   frame: number
   /** 上一环的输出；链首为 null。source === 'prev' 的 pass 必须读它 */
   input: THREE.Texture | null
-  /** 当前曝光值（EV 语义的线性倍数）。自动曝光在 S3 接入，会有 1 帧延迟 */
-  exposure: number
+  /** 链首（beauty）产生的深度纹理，供后续 SSR / SSGI 复用；无则为 null */
+  inputDepth: THREE.DepthTexture | null
+  /** 曝光偏移（EV 语义）。着色器内 multiplier = exp2(exposureEV) */
+  exposureEV: number
 }
 
 export interface PassTargetSpec {
   format: TargetFormat
   filter: 'linear' | 'nearest'
   /**
-   * MSAA 采样数；0 = 关闭。
-   * 注意：渲到 RenderTarget 会丢失默认后缓冲的 MSAA，
-   * 不显式补回的话，边缘锯齿会与「直接渲到屏幕」的老路径产生可见差异。
+   * MSAA 采样数，0 = 关闭。
+   * 渲染器的 antialias 只对默认后缓冲有效；渲到自建 RT 后必须自带 multisample，
+   * 否则边缘锯齿会与「直接渲到屏幕」的老路径产生可见差异。
    */
   samples?: number
+  /**
+   * 是否附带可采样的 DepthTexture（p0-gbuffer-hud / SSR / SSGI 都要复用深度，故在 RT 创建时即挂好）。
+   *
+   * ⚠️ 沿用 p0-hdr 步骤 1 记录的风险：three 只自动 resolve **颜色**，
+   * MSAA 下 DepthTexture 不保证可采样。当前阶段不读深度所以安全，
+   * 到 p0-gbuffer-hud 真正读深度时必须复核（或届时改走 TAA）。
+   */
+  depthTexture?: boolean
 }
 
 export interface Pass {
@@ -46,13 +56,21 @@ export interface Pass {
    * target 为 null 表示输出到屏幕；返回 null 表示「已出屏，链路到此结束」。
    */
   render?(ctx: PassContext, target: THREE.WebGLRenderTarget | null): THREE.Texture | null
-  /** GPU 计时归因，由 p0-gbuffer-hud 接入后填充 */
+  /** 单 pass GPU 耗时；p0-gbuffer-hud 接 EXT_disjoint_timer_query_webgl2 后由各 pass 填入 */
   lastGpuMs?: number
   dispose(): void
 }
 
-export interface PassStat {
+/** 与 DEVLOG 中记录的 PassTiming 结构保持一致 */
+export interface PassTiming {
   name: string
-  /** CPU 侧耗时（ms）。GPU 时间需要 timer query，见 p0-gbuffer-hud */
-  ms: number
+  /** CPU 侧耗时（performance.now），仅反映提交成本 */
+  cpuMs: number
+  /** 单 pass GPU 耗时；p0-gbuffer-hud 接 EXT_disjoint_timer_query_webgl2 后填充 */
+  gpuMs: number | null
+}
+
+export interface PipelineStats {
+  passes: PassTiming[]
+  totalMs: number
 }

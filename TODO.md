@@ -232,20 +232,29 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 
 **交付物**
 
-| 文件 | 职责 |
-| --- | --- |
-| `renderer/Pass.ts` | `Pass` / `PassContext` / `PassTargetSpec` 类型契约 |
-| `renderer/FullscreenQuad.ts` | 全屏三角形 + 通用顶点着色器（uv 由位置推导，忽略所有矩阵） |
-| `renderer/Pipeline.ts` | 多 pass 调度、RenderTarget 池化复用、`info` 手工重置、debug 截断、bypass 路径。**无任何 React 依赖** |
-| `renderer/passes/ScenePass.ts` | 链首：场景 → HDR 目标（含 MSAA 补偿） |
-| `renderer/passes/DisplayPass.ts` | 链尾：呈现到屏幕（线性 → 输出色彩空间编码） |
-| `renderer/renderStore.ts` | 链路的 UI 侧状态（MobX），5Hz 采样 |
-| `renderer/PipelineDriver.tsx` | Pipeline ↔ R3F 的唯一接触点：尺寸、帧驱动、开关同步、统计回传 |
-| `renderer/PostFX.tsx` | pass 链宿主（改写自原 stub） |
-| `renderer/PipelinePanel.tsx` | HUD 面板：HDR 档位 / 旁路开关 / 调试视图下拉 |
-| `renderer/CanvasRoot.tsx`（改） | 加 `flat`、挂载 `<PostFX />` |
-| `perf/PerfProbe.tsx`（改） | priority 提到 2，保证在链路渲染之后采样 |
-| `perf/PerfPanel.tsx`（改） | 增加各 pass 耗时分解（CPU 侧） |
+| 文件 | 来源 | 职责 |
+| --- | --- | --- |
+| `postfx/HDRPipeline.ts` | 步骤 1 既有，保留为门面 | 选 RT 格式 / 组装链路 / 对外公开 API（`hdrSupported`、`passTimes`、`setExposureEV`、`setTonemap`、`setSize`、`render`、`dispose`）。**无 React 依赖** |
+| `postfx/Pipeline.ts` | 本次新增 | 通用多 pass 调度、RT 池化复用（按 format/filter/samples/depth/尺寸 分池）、`info` 手工重置、调试截断、bypass；`dispose` 刻意非终结（原因见踩坑 2） |
+| `postfx/Pass.ts` | 本次新增 | `Pass` / `PassContext` / `PassTargetSpec` / `PassTiming` 类型契约 |
+| `postfx/FullscreenQuad.ts` | 本次新增 | 全屏单三角形 + 通用顶点着色器（uv 由位置推导，忽略矩阵）；材质 `toneMapped = false` |
+| `postfx/passes/BeautyPass.ts` | 步骤 1 的 beauty 段 | 链首：场景 → HDR 目标（`samples: 4` + `DepthTexture`，沿用既有决策） |
+| `postfx/passes/TonemapOutputPass.ts` | 步骤 1 的输出段 | 链尾：EV + 曲线占位 + **手写分段**线性→sRGB（不依赖 three 内部 chunk 名） |
+| `postfx/hdrStore.ts` | 本次新增 | 链路 UI 侧状态（MobX，5Hz 采样），承载档位标注与旁路 / 调试开关 |
+| `postfx/HDRPanel.tsx` | 本次新增 | HUD 面板：RT 档位 / 旁路 / 调试视图 |
+| `postfx/HDRDriver.tsx` | 步骤 1 既有，最小增补 | 尺寸 / 帧驱动 / 开关同步 / 统计回传 |
+| `renderer/PostFX.tsx` | 步骤 1 既有 | 后处理插槽：渲染 children + `<HDRDriver />` |
+| `renderer/CanvasRoot.tsx`（改） | 步骤 1 既有 | 加 **`flat`**（必需，见踩坑 1） |
+| `perf/PerfProbe.tsx` | 步骤 1 既有 | priority 2，保证在链路之后采样 |
+| `perf/PerfPanel.tsx`（改） | 本次新增 | 各 pass 计时分解（CPU 侧） |
+| `e2e/smoke.spec.ts` | 本次新增 | Playwright 冒烟：无 console error / 画面非空 / 档位标注 / 自建链与直出的像素 A/B |
+
+**关于「同一任务被实现两次」**
+
+步骤 1 在 2026-09-23 已完成并推送（`ea6e5f3`），随后在 09-28 被独立重做了一遍（`1d16b20`，在 `renderer/` 下另起了一套抽象，并覆盖了 `PostFX.tsx` / `CanvasRoot.tsx` / `PerfProbe.tsx`）。
+经确认采用「以 `postfx/HDRPipeline.ts` 为基线原地重构」：抽象层迁入 `postfx/`，`renderer/` 那套删除，`HDRPipeline` 的公开 API 与 `DEVLOG.md` 的记录全部保留。
+
+**教训：动手前先 `git log` / `git ls-files` 确认现状，不要只凭一次代码搜索就断言「某能力为零」。**
 
 **动手时核实过的 5 个运行时事实**（后续改动不要再重新踩）
 
