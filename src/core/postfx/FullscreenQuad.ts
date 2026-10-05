@@ -1,18 +1,11 @@
 import * as THREE from 'three'
+import fullscreenVert from './shaders/fullscreen.vert'
 
 /**
- * 全屏 pass 的通用顶点着色器。
- * 刻意忽略所有矩阵：顶点位置直接解释为裁剪空间坐标，
- * uv 由位置推导，因此不需要 uv 属性，也不需要相机参与运算。
+ * 全屏 pass 的通用顶点着色器（独立 .vert 文件，经 vite-plugin-glsl 导入）。
+ * 以 RawShaderMaterial 加载，position 在着色器内自行声明。
  */
-export const FULLSCREEN_VERTEX_SHADER = /* glsl */ `
-  varying vec2 vUv;
-
-  void main() {
-    vUv = position.xy * 0.5 + 0.5;
-    gl_Position = vec4(position.xy, 0.0, 1.0);
-  }
-`
+export const FULLSCREEN_VERTEX_SHADER = fullscreenVert
 
 /** 顶点着色器不使用矩阵，相机只需满足 three 的 render(scene, camera) 签名 */
 const QUAD_CAMERA = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)

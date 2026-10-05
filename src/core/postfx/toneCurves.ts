@@ -21,6 +21,9 @@ import type { TonemapMode } from './HDRPipeline'
  *   c) 用 TSL / 节点材质统一，代价是引入 WebGPU 后端
  * ============================================================================
  */
+/**
+ * 用于 UI 显示曲线
+ */
 export type ToneCurve = (x: number) => number
 
 /** 曲线图与验证脚本都按 [0, CURVE_DOMAIN_MAX] 采样 */
@@ -52,7 +55,8 @@ export const CURVE_DOMAIN_MAX = 8
  */
 export const reinhardCurve: ToneCurve = (x) => {
   void x
-  return 0 // TODO(S2)：替换为你的实现
+  const reinhard = x / (1 + x);
+  return reinhard
 }
 
 /**
