@@ -9,6 +9,49 @@
 
 ---
 
+## 2026-10-06 · p0-hdr 步骤 2：三条色调映射曲线实现（Reinhard / ACES / AgX）
+
+### 目标
+
+把 S2 留白的曲线数学补上：Reinhard 本来就对；修 ACES 公式与 GLSL 错误；把 AgX 从「裸多项式」补成完整实现，并在本条目记清 AgX 的 GPU/CPU 差异。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/shaders/tonemap-output.frag` | 改造 | ACES 改为 `x(ax+b)/(x(cx+d)+e)` 并去掉非法 `f` 后缀；新增 `agxDefaultContrastApprox` + `agxTonemap`（原色变换矩阵 + log2 编码）；`mode==2` 调 `agxTonemap` |
+| `src/core/postfx/toneCurves.ts` | 改造 | `agxCurve` 修正符号（x 项 `+0.1191`、常数 `-0.00232`），输入钳 `Math.max(0,x)` |
+| （既有）`tonemap-output.frag:80` | 已有 | `color = max(color, 0.0)` 在分支前钳负值，统一满足 f(0)=0 |
+
+### 关键设计决策
+
+1. **GPU/CPU 不必逐像素一致，但曲线段必须同形**：`toneCurves.ts` 顶部注释已明确——`agxCurve` 只承担**标量对比度曲线段**，完整原色变换（`AgXInsetMatrix` / `AgXOutsetMatrix`）是 GPU 侧矩阵运算，CPU 只需保证曲线**形状**一致（用于曲线图）。因此 CPU 仍是逐通道标量，GPU 会混通道——这是**预期差异**，不是 bug，曲线图看的是形状。
+2. **AgX 取 three.js 同款 Sobotka 拟合**：流程 = inset 矩阵（线性 RGB → AgX 原色）→ `log2` → 归一化 `(val+10)/12` → look 矩阵 → `agxDefaultContrastApprox` → 反归一化 `val*12-10` → `exp2`。
+3. **GLSL `mat3` 是列主序**：矩阵常数按 three.js 原样填入（不再转置），转置会偏色。
+4. **`log2(0)` 防护**：`agxTonemap` 内 `max(val, 1e-4)`，极小输入≈黑，避免 `-inf` 炸成 NaN/白。
+
+### 踩坑与修复
+
+1. **ACES 一开始编译不过 + 公式错**
+   - GLSL 不允许 `2.51f` 这类 C 风格 `f` 后缀（WebGL 编译错误）；且原代码把 `x(ax+b)/(x(cx+d)+e)` 写成了 `(ax+b)/(cx+d+e)`——分子分母都漏了外层 `x`。两处都修了，并与 CPU `acesCurve` 对齐。
+2. **旧 AgX GPU/CPU 互相对不上**
+   - GPU 用 `+40.14·x⁵`、无常数项；CPU 用 `-40.14·x⁵` 但常数 `+0.00232`（规范应为 `-0.00232`），且两边 x 项都是错的 `-0.1191`（规范 `+0.1191`）。统一修正为规范多项式。
+3. **lint 告警是误报**：`tonemap-output.frag:19` 的 `in vec2 vUv` 被静态分析报「not supported for this version」——本文件走 RawShaderMaterial / GLSL 3.00，`in/out` 合法，运行时由 three.js 处理。该告警在本轮改动前就存在，与此次无关。
+
+### 验证
+
+- `npm run typecheck`：`toneCurves.ts` 通过（shader 无 TS lint）。
+- 形状自查：AgX 多项式常数项修正后，`f(0)=−0.00232→clamp 0`、`x→∞` 有界；ACES 与 CPU `acesCurve` 公式逐项一致。
+- 待人工目视：切换 `tm=agx/aces/reinhard` 下拉，确认三档观感明显不同、AgX 不偏色。
+
+### 遗留 / 下一步
+
+1. **AgX 常数未联网逐字核对**：矩阵与 `(val+10)/12` 取自 three.js `agx` 实现，建议上线前对照 `three/src/renderers/shaders/ShaderChunk/tonemapping_pars_fragment.glsl.js` 复核顺序。
+2. **是否要像素级一致**：若以后要求 GPU/CPU 逐像素相同，`agxCurve` 得改成吃 `vec3` 并复刻矩阵——目前按「图用」足够，差异已写在本条目「关键设计决策 1」。
+3. S2 还剩「过曝回收」呈现（`uClipView` 开关 vs 独立 clip-view pass）未决，待定后补记。
+
+---
+
 ## 2026-09-28 · p0-hdr 步骤 2 框架：EV / 曲线 / 曲线图接通，曲线数学留白
 
 ### 目标

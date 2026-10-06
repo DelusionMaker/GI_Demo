@@ -4,6 +4,12 @@ import fullscreenVert from './shaders/fullscreen.vert'
 /**
  * 全屏 pass 的通用顶点着色器（独立 .vert 文件，经 vite-plugin-glsl 导入）。
  * 以 RawShaderMaterial 加载，position 在着色器内自行声明。
+ *
+ * 注意：本着色器已用 GLSL ES 3.00 语法（in / out），且 #version 300 es 由
+ * three 通过 material.glslVersion = THREE.GLSL3 注入（不要手写 #version）。
+ * 任何复用 FULLSCREEN_VERTEX_SHADER 的 RawShaderMaterial 都必须同样带上
+ * glslVersion: THREE.GLSL3，否则 #version 会被 three 注入的 #define SHADER_TYPE
+ * 挤到非首行，编译器回退到 ES 1.00 而报 'in'/'out' 不支持。
  */
 export const FULLSCREEN_VERTEX_SHADER = fullscreenVert
 

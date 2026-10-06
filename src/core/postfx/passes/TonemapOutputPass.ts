@@ -6,8 +6,8 @@ import type { Pass, PassContext } from '../Pass'
 /**
  * 精确线性 → sRGB 分段编码。
  *
- * 自建 pass 走 RawShaderMaterial（着色器在独立 .frag 文件里，自带 #version 100
- * 与 precision），three 不会自动为它插入编码调用，必须自己编码 ——
+ * 自建 pass 走 RawShaderMaterial（着色器在独立 .frag 文件里，自带 #version 300 es
+ * 与 in/out），three 不会自动为它插入编码调用，必须自己编码 ——
  * 这是自建管线画面发灰 / 发暗的最高频原因。不要用 pow(c, 1/2.2) 近似，暗部会偏。
  */
 const FRAGMENT_SHADER = tonemapFrag
@@ -31,6 +31,7 @@ export class TonemapOutputPass implements Pass {
   constructor() {
     this.quad = new FullscreenQuad(
       new THREE.RawShaderMaterial({
+        glslVersion: THREE.GLSL3,
         vertexShader: FULLSCREEN_VERTEX_SHADER,
         fragmentShader: FRAGMENT_SHADER,
         uniforms: {
