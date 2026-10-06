@@ -225,7 +225,7 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 | **S1** | `Pipeline` + `Pass` + `FullscreenQuad` 抽象；场景渲进 RGBA16F；`PostFX` 从直通改为挂载 Pipeline；`CanvasRoot` 接上 `flat` 与 resize | 画面与直出路径一致；HUD 显示 HDR 档位；不支持浮点时回落 RGBA8 并在 HUD 标注 | ✅ **代码完成**（浏览器内验证待补，见 3.4.1） |
 | **S2** | 曝光滑杆 / 曲线下拉 / URL 序列化 / 曲线对照图已接通；**曲线数学已实现**（Reinhard 本来正确；ACES 修正公式 + 去 `f` 后缀；AgX 补成完整 Sobotka 拟合，含原色变换矩阵）；**过曝回收诊断视图**（映射前 >1 像素染红，采用 shader 方案 a） | 三条曲线形状正确（Reinhard 无 shoulder、ACES 有 toe/shoulder、AgX 更陡）；EV 变化时整体亮度单调 | ✅ 完成（曲线 + 过曝回收诊断） |
 | **S3** | `passes/LuminancePass.ts`（降采样 + log 平均 + 隔帧异步回读，旁路透传不截断主链）；直方图面板；自动曝光（middle-gray 补偿 + 指数平滑）；「过曝回收」A/B 对比开关 | EV 从 −4 扫到 +4 时高光**不截断**（对比 8bit 路径的死白/色块）；直方图随 EV 平移；自动曝光 1–2 帧收敛、无可见振荡 | ✅ 代码完成（浏览器内验证待补，见 DEVLOG 2026-10-06） |
-| **S4** | `passes/BloomPass.ts`：阈值 + 6–8 级 mip 下采样 + 上采样合成 | mip 链各级可缩略图可视化；关闭时高光边界硬、开启后柔和不糊；给出 bloom 的耗时占比 | 1 天（可拆到下一轮） |
+| **S4** | `passes/BloomPass.ts`（HDR 域内阈值 + 6 级 mip 下采样 + 上采样合成，框架已搭）；`bloom` / `bloomIntensity` 旋钮已接 | mip 链各级可缩略图可视化；关闭时高光边界硬、开启后柔和不糊；给出 bloom 的耗时占比 | ✅ 框架就绪（阈值 soft-knee / 降采样 / 上采样三个算法段待你实现，见 DEVLOG 2026-10-06 p0-hdr S4） |
 | **S5** | 收尾：`src/site/demos.ts` 的 `hdr` 条目 status → `done`，如实补 limitations（自动曝光迟滞、半精度暗部条带） | 站点上该 demo 不再显示「规划中」 | 0.5 天 |
 
 #### 3.4.1 S1 完成记录
@@ -304,7 +304,7 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 - [ ] 自动曝光可开关，1–2 帧收敛，无可见振荡
 - [ ] Bloom 可开关，mip 链各级可可视化，并给出耗时占比
 - [ ] `Pipeline` / passes 目录下**没有任何 React import**
-- [ ] 所有参数进 URL（`?ev=&tm=&autoexposure=&clipView=`），链接可直接复现
+- [ ] 所有参数进 URL（`?ev=&tm=&autoexposure=&clipView=&bloom=&bloomIntensity=`），链接可直接复现
 - [ ] 性能面板仍是 5Hz 采样 —— 加了 pass 之后**不允许**退化成每帧重渲染
 - [ ] `npm run typecheck` 与 `npm run build` 通过
 - [ ] demo 元数据 status 改 `done`，limitations 如实填写

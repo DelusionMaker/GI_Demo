@@ -68,6 +68,10 @@ export function HDRDriver() {
       : knobs.ev
     pipeline.setExposureEV(displayEV)
 
+    // Bloom 开关与强度（算法段由用户实现，这里只同步旋钮）
+    pipeline.bloom.enabled = knobs.bloom
+    pipeline.bloom.intensity = knobs.bloomIntensity
+
     // 先渲染：luminance pass 会把本帧的测光小图写进自己的 RT
     pipeline.render(gl, scene, camera)
 

@@ -23,6 +23,10 @@ export type HdrParams = {
   autoexposure: boolean
   /** 过曝回收诊断：把任一通道 > 1 的像素染红，直观展示被 tonemap 救回的高光 */
   clipView: boolean
+  /** Bloom（HDR 域内阈值 + mip 链），物理正确的高光光晕 */
+  bloom: boolean
+  /** Bloom 强度（HDR 线性空间叠加系数） */
+  bloomIntensity: number
 }
 
 /** 注意：defaults 必须显式标注类型，否则 boolean 会被推断成字面量类型 */
@@ -33,6 +37,8 @@ export const HDR_PARAM_DEFAULTS: HdrParams = {
   hdrDebug: 'none',
   autoexposure: false,
   clipView: false,
+  bloom: false,
+  bloomIntensity: 1,
 }
 
 export const hdrParams = createDemoStore(HDR_PARAM_DEFAULTS)

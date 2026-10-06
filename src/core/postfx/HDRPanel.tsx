@@ -78,6 +78,23 @@ export const HDRPanel = observer(function HDRPanel() {
       <HistogramPanel />
 
       <Toggle
+        label="Bloom"
+        hint="HDR 域内阈值 + mip 链，物理正确的高光光晕"
+        value={knobs.bloom}
+        onChange={(value) => hdrParams.set({ bloom: value })}
+      />
+
+      <Slider
+        label="Bloom 强度"
+        min={0}
+        max={3}
+        step={0.1}
+        digits={1}
+        value={knobs.bloomIntensity}
+        onChange={(value) => hdrParams.set({ bloomIntensity: value })}
+      />
+
+      <Toggle
         label="旁路整条链"
         hint="对比接入前的场景直出"
         value={knobs.bypass}

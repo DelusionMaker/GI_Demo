@@ -4,6 +4,7 @@ import { Pipeline } from './Pipeline'
 import { BeautyPass } from './passes/BeautyPass'
 import { TonemapOutputPass } from './passes/TonemapOutputPass'
 import { LuminancePass } from './passes/LuminancePass'
+import { BloomPass } from './passes/BloomPass'
 import type { PassTiming } from './Pass'
 
 export type { PassTiming }
@@ -67,6 +68,7 @@ export class HDRPipeline {
 
   private readonly beauty = new BeautyPass()
   private readonly luminancePass = new LuminancePass()
+  private readonly bloomPass = new BloomPass()
   private readonly output = new TonemapOutputPass()
 
   private static warnedFallback = false
@@ -80,6 +82,7 @@ export class HDRPipeline {
     this.pipeline = new Pipeline({ hdr: this.hdrSupported })
     this.pipeline.addPass(this.beauty)
     this.pipeline.addPass(this.luminancePass)
+    this.pipeline.addPass(this.bloomPass)
     this.pipeline.addPass(this.output)
     this.pipeline.setSize(width, height)
 
@@ -126,6 +129,11 @@ export class HDRPipeline {
   /** 自动曝光测光 pass（驱动组件据此隔帧回读 → 自动 EV + 直方图） */
   get luminance(): LuminancePass {
     return this.luminancePass
+  }
+
+  /** Bloom pass（驱动组件据此开关 enabled / 设置 intensity / threshold / knee） */
+  get bloom(): BloomPass {
+    return this.bloomPass
   }
 
   /**

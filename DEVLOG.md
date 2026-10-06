@@ -9,6 +9,55 @@
 
 ---
 
+## 2026-10-06 · p0-hdr 步骤 4：Bloom 框架搭建（算法段留待自写）
+
+### 目标
+
+把 S4 的**框架**搭好：HDR 域内 Bloom 的 pass 类、内部 mip 链管理、四个着色器骨架、挂链、旋钮接线全部就位；但**三个算法段（阈值 soft-knee、降采样、上采样）留成 TODO 框**，由用户本人实现（作品集「自写算法」的核心交付）。默认 `bloom=false`，开启前不会跑占位逻辑，避免误导。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/passes/BloomPass.ts` | 新建 | Bloom pass 框架：内部 6 级 mip RT（半分辨率起）、阈值→降采样级联→上采样累加→合成回全分辨率 HDR，输出 `scene+bloom*intensity` 给 tonemap-output |
+| `src/core/postfx/shaders/bloom-threshold.frag` | 新建 | 阈值提取骨架，`extractBright()` 为 TODO（soft-knee） |
+| `src/core/postfx/shaders/bloom-downsample.frag` | 新建 | 降采样骨架，`downsample()` 为 TODO（13-tap / 4-tap 双线性） |
+| `src/core/postfx/shaders/bloom-upsample.frag` | 新建 | 上采样累加骨架，`upsample()` 为 TODO（双线性 / 9-tap + 与更细 mip 相加） |
+| `src/core/postfx/shaders/bloom-composite.frag` | 新建 | 合成 `scene + bloom*intensity`（无 TODO，纯相加） |
+| `src/core/postfx/HDRPipeline.ts` | 改造 | 链中插入 `bloomPass`（luminance 与 output 之间）；暴露 `get bloom()` |
+| `src/core/postfx/hdrParams.ts` | 改造 | 旋钮增 `bloom`、`bloomIntensity`（走 createDemoStore，进 URL） |
+| `src/core/postfx/HDRDriver.tsx` | 改造 | 每帧同步 `pipeline.bloom.enabled` / `intensity` |
+| `src/core/postfx/HDRPanel.tsx` | 改造 | 加「Bloom」开关 + 「Bloom 强度」滑杆 |
+| `src/core/postfx/HistogramPanel.tsx` / `global.css` | 既有 | 上一轮修的选择器冲突（见 2026-10-06 S3 条目） |
+
+### 关键设计决策
+
+1. **Bloom 在 tonemap 之前（HDR 线性空间）**：满足「物理正确」；`BloomPass` 输出 `scene+bloom` 回链，tonemap-output 只管映射、零改动（它本就读 `ctx.input`）。
+2. **单 pass 自管整条 mip 级联**：与 `LuminancePass` 同样的「内部 RT」思路，但这里是 6 级降采样 + 6 级上采样累加。内部 RT 不进 `Pipeline` 的 RT 池，`Pipeline` 只为本 pass 分配最终全分辨率输出 RT（`scale=1`、RGBA16F）。
+3. **复用已建立的「插入 pass」模式**：beauty → luminance(旁路) → bloom → tonemap-output，无需改调度核心——印证步骤 1 抽象化决策的收益。
+4. **`enabled=false` 等价无 bloom**：跳过本 pass 后回链的是原 beauty，A/B 直接成立。
+5. **算法段外置、占位可见**：四个 .frag 里 `extractBright` / `downsample` / `upsample` 目前原样返回（开启后会「整屏发糊」），明确标注 TODO，用户填算法段前不会误以为是做对了。
+
+### 踩坑与修复
+
+- 无（本轮只搭框架，未触碰运行时逻辑；占位着色器确保 `npm run build` 通过）。
+
+### 验证
+
+- `npm run typecheck`：通过。
+- `npm run build`：通过（glsl 导入正常）。
+- `npm run smoke`：4 passed（bloom 默认关闭，不影响既有用例；新增 HUD 控件不破坏布局）。
+
+### 遗留 / 下一步（待用户实现算法段）
+
+1. **`extractBright`（soft-knee）**：`bloom-threshold.frag`，建议 Jimenez/COD 风格在 `threshold±knee` 做平滑过渡。
+2. **`downsample`**：`bloom-downsample.frag`，建议 13-tap 或 Karis 4-tap 双线性（半纹素偏移避免漏采样）。
+3. **`upsample`**：`bloom-upsample.frag`，双线性 / 9-tap 上采样并与更细 mip 相加。
+4. 实现后把 `hdrParams` 的 `bloom` 默认打开或手动验证；补 `bloom` 的耗时占比（perf 面板已有逐 pass 计时，bloom 作为单 pass 显示其 CPU 耗时）。
+5. S5 收尾：`src/site/demos.ts` 的 `hdr` 条目 status → `done`，补 limitations（半精度暗部条带、bloom 在 tonemap 前故不受 EV 影响等）。
+
+---
+
 ## 2026-10-06 · p0-hdr 步骤 3：自动曝光 + 直方图 + 过曝回收诊断（含 S2 收口）
 
 ### 目标
