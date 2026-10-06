@@ -23,6 +23,12 @@ export class HdrStore {
   /** 逐 pass 计时（CPU 侧，5Hz 采样；GPU 时间待 p0-gbuffer-hud） */
   passTimes: PassTiming[] = []
   totalMs = 0
+  /** 亮度直方图（归一化 log 亮度分桶计数），5Hz 采样供 HUD 绘制 */
+  histogram: number[] = []
+  /** 自动曝光算出的 EV，0 表示未启用自动曝光 */
+  autoEV = 0
+  /** 当前是否处于自动曝光模式 */
+  autoExposureActive = false
 
   /** 当前存活的管线；刻意非 observable（只是转发目标，不参与渲染订阅） */
   private active: Pipeline | null = null
@@ -35,9 +41,13 @@ export class HdrStore {
       passNames: observable,
       passTimes: observable,
       totalMs: observable,
+      histogram: observable,
+      autoEV: observable,
+      autoExposureActive: observable,
       register: actionBound,
       unregister: actionBound,
       pushStats: actionBound,
+      pushHistogram: actionBound,
     })
   }
 
@@ -62,6 +72,13 @@ export class HdrStore {
     if (!pipeline) return
     this.passTimes = pipeline.stats.passes
     this.totalMs = pipeline.stats.totalMs
+  }
+
+  /** 把 luminance 测光 pass 的直方图与自动曝光状态回传到 HUD（5Hz） */
+  pushHistogram(histogram: number[], autoEV: number, active: boolean): void {
+    this.histogram = histogram
+    this.autoEV = autoEV
+    this.autoExposureActive = active
   }
 }
 

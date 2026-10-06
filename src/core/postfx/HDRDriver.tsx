@@ -29,6 +29,8 @@ export function HDRDriver() {
   const size = useThree((state) => state.size)
   const dpr = useThree((state) => state.viewport.dpr)
   const lastStatsPush = useRef(0)
+  /** 隔帧回读开关：避免每帧 readPixels 把 GPU 管线 stall（TODO 3.6 的性能故事） */
+  const readbackToggle = useRef(false)
 
   const pipeline = useMemo(
     () => new HDRPipeline(Math.round(size.width * dpr), Math.round(size.height * dpr)),
@@ -56,15 +58,34 @@ export function HDRDriver() {
     // UI 旋钮 → 渲染核心（渲染核心不认识 MobX）
     core.bypass = knobs.bypass
     core.debugPass = resolveDebugPass(knobs.hdrDebug)
-    pipeline.setExposureEV(knobs.ev)
     pipeline.setTonemap(knobs.tm)
+    pipeline.setClipView(knobs.clipView)
 
+    // 自动曝光：手动 EV 在自动模式下作为补偿量叠加；关闭时直接用手动 EV。
+    // autoEV 来自上一帧的回读结果（自动曝光有 1 帧延迟，这是有意为之）。
+    const displayEV = knobs.autoexposure
+      ? pipeline.luminance.autoEV + knobs.ev
+      : knobs.ev
+    pipeline.setExposureEV(displayEV)
+
+    // 先渲染：luminance pass 会把本帧的测光小图写进自己的 RT
     pipeline.render(gl, scene, camera)
+
+    // 再隔帧回读（读的是本帧刚渲好的测光 RT）→ 更新 autoEV + 直方图，供下一帧使用
+    readbackToggle.current = !readbackToggle.current
+    if (readbackToggle.current) {
+      pipeline.luminance.readback(gl, knobs.autoexposure, displayEV)
+    }
 
     const now = performance.now()
     if (now - lastStatsPush.current >= STATS_INTERVAL_MS) {
       lastStatsPush.current = now
       hdrStore.pushStats()
+      hdrStore.pushHistogram(
+        pipeline.luminance.histogram,
+        pipeline.luminance.autoEV,
+        pipeline.luminance.autoExposureActive,
+      )
     }
   }, 1)
 

@@ -4,6 +4,7 @@ import type { TonemapMode } from './HDRPipeline'
 import { hdrParams } from './hdrParams'
 import { hdrStore } from './hdrStore'
 import { ToneCurveGraph } from './ToneCurveGraph'
+import { HistogramPanel } from './HistogramPanel'
 
 const TONEMAP_OPTIONS: SelectOption<TonemapMode>[] = [
   { value: 'linear', label: '直通（无映射）' },
@@ -59,6 +60,22 @@ export const HDRPanel = observer(function HDRPanel() {
       />
 
       <ToneCurveGraph />
+
+      <Toggle
+        label="自动曝光"
+        hint="luminance 测光 pass 跨帧算 EV，手动 EV 转为补偿"
+        value={knobs.autoexposure}
+        onChange={(value) => hdrParams.set({ autoexposure: value })}
+      />
+
+      <Toggle
+        label="过曝回收诊断"
+        hint="任一通道 > 1 的像素染红，展示被 tonemap 救回的高光"
+        value={knobs.clipView}
+        onChange={(value) => hdrParams.set({ clipView: value })}
+      />
+
+      <HistogramPanel />
 
       <Toggle
         label="旁路整条链"

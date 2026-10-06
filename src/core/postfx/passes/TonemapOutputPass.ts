@@ -39,6 +39,7 @@ export class TonemapOutputPass implements Pass {
           uResolution: { value: new THREE.Vector2(1, 1) },
           uExposureEV: { value: 0 },
           uTonemap: { value: 0 },
+          uClipView: { value: 0 },
         },
         depthTest: false,
         depthWrite: false,
@@ -48,6 +49,10 @@ export class TonemapOutputPass implements Pass {
 
   setTonemapIndex(index: number): void {
     this.quad.material.uniforms.uTonemap.value = index
+  }
+
+  setClipView(enabled: boolean): void {
+    this.quad.material.uniforms.uClipView.value = enabled ? 1 : 0
   }
 
   render(ctx: PassContext, target: THREE.WebGLRenderTarget | null): null {

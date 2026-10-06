@@ -3,6 +3,7 @@ import { capabilitiesStore } from '../capabilities'
 import { Pipeline } from './Pipeline'
 import { BeautyPass } from './passes/BeautyPass'
 import { TonemapOutputPass } from './passes/TonemapOutputPass'
+import { LuminancePass } from './passes/LuminancePass'
 import type { PassTiming } from './Pass'
 
 export type { PassTiming }
@@ -65,6 +66,7 @@ export class HDRPipeline {
   readonly pipeline: Pipeline
 
   private readonly beauty = new BeautyPass()
+  private readonly luminancePass = new LuminancePass()
   private readonly output = new TonemapOutputPass()
 
   private static warnedFallback = false
@@ -77,6 +79,7 @@ export class HDRPipeline {
 
     this.pipeline = new Pipeline({ hdr: this.hdrSupported })
     this.pipeline.addPass(this.beauty)
+    this.pipeline.addPass(this.luminancePass)
     this.pipeline.addPass(this.output)
     this.pipeline.setSize(width, height)
 
@@ -114,6 +117,15 @@ export class HDRPipeline {
   setTonemap(mode: TonemapMode): void {
     // URL 里的 tm 可能是任意字符串，取不到索引时退回直通，避免写入 undefined
     this.output.setTonemapIndex(TONEMAP_INDEX[mode] ?? TONEMAP_INDEX.linear)
+  }
+
+  setClipView(enabled: boolean): void {
+    this.output.setClipView(enabled)
+  }
+
+  /** 自动曝光测光 pass（驱动组件据此隔帧回读 → 自动 EV + 直方图） */
+  get luminance(): LuminancePass {
+    return this.luminancePass
   }
 
   /**

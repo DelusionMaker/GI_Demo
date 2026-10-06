@@ -19,6 +19,10 @@ export type HdrParams = {
   bypass: boolean
   /** 中间量可视化：把链路截断到某个 pass；'none' = 完整链路 */
   hdrDebug: string
+  /** 自动曝光：由 luminance 测光 pass 跨帧算 EV（手动 EV 滑块转为补偿量） */
+  autoexposure: boolean
+  /** 过曝回收诊断：把任一通道 > 1 的像素染红，直观展示被 tonemap 救回的高光 */
+  clipView: boolean
 }
 
 /** 注意：defaults 必须显式标注类型，否则 boolean 会被推断成字面量类型 */
@@ -27,6 +31,8 @@ export const HDR_PARAM_DEFAULTS: HdrParams = {
   tm: 'linear',
   bypass: false,
   hdrDebug: 'none',
+  autoexposure: false,
+  clipView: false,
 }
 
 export const hdrParams = createDemoStore(HDR_PARAM_DEFAULTS)

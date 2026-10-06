@@ -9,6 +9,64 @@
 
 ---
 
+## 2026-10-06 · p0-hdr 步骤 3：自动曝光 + 直方图 + 过曝回收诊断（含 S2 收口）
+
+### 目标
+
+把 S2 剩下的「过曝回收」呈现定掉（方案 a：`uClipView` 开关），并落地 S3：自动曝光测光（luminance 测光 pass + 跨帧异步回读 + middle-gray 补偿）、亮度直方图面板（可视化中间量）、自动曝光开关。链路顺序变为 `beauty → luminance(旁路) → tonemap-output`。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/passes/LuminancePass.ts` | 新建 | 自动曝光测光 pass：内部 64×64 RGBA8 RT + 旁路透传（`render` 返回 `ctx.input`）+ `readback()` 解码平均 log 亮度 → autoEV + 直方图分桶 |
+| `src/core/postfx/shaders/luminance.frag` | 新建 | 降采样 + 写归一化 log 亮度（TAPS×TAPS 网格 tap 近似区域平均，避免单 bilinear 欠采样导致 auto-EV 抖） |
+| `src/core/postfx/passes/TonemapOutputPass.ts` | 改造 | 加 `uClipView` uniform + `setClipView()`；映射前 >1 像素染红（保留 40% 已映射结果） |
+| `src/core/postfx/shaders/tonemap-output.frag` | 改造 | 加 `uniform int uClipView`；`main()` 内标红分支（S2 遗留的「过曝回收怎么呈现」） |
+| `src/core/postfx/HDRPipeline.ts` | 改造 | 链中插入 `luminancePass`（beauty 与 output 之间）；暴露 `get luminance()` / `setClipView()` |
+| `src/core/postfx/hdrParams.ts` | 改造 | 旋钮增 `autoexposure`、`clipView`（走 createDemoStore，自动进 URL） |
+| `src/core/postfx/hdrStore.ts` | 改造 | 运行时状态增 `histogram` / `autoEV` / `autoExposureActive` + `pushHistogram()`（5Hz） |
+| `src/core/postfx/HDRDriver.tsx` | 改造 | 隔帧回读（每两帧一次，读本帧刚渲好的测光 RT）；自动曝光合并进 `exposureEV`；直方图回传 |
+| `src/core/postfx/HistogramPanel.tsx` | 新建 | 亮度直方图 canvas（log2 亮度横轴，按当前生效曝光平移），复用 `ToneCurveGraph` 的画法 |
+| `src/core/postfx/HDRPanel.tsx` | 改造 | 加「自动曝光」「过曝回收诊断」两个 Toggle + 直方图面板 |
+
+### 关键设计决策
+
+1. **测光 pass 用「旁路透传」插入线性链**：`Pipeline` 是「每环输出喂下一环」，而 luminance 是分析、不该替换主色彩流。故 `LuminancePass.render()` 把降采样后的 log 亮度写进**自己的内部小 RT**，但 `return ctx.input`（原 beauty 纹理），tonemap 拿到的仍是 HDR 原图——无需改调度核心。
+2. **测光 RT 用 RGBA8 而非 RGBA16F**：存归一化 `log2(lum)∈[0,1]`，回读走 `UNSIGNED_BYTE`，绕开 half-float 回读的兼容性问题（WebGL2 读 16F 需 `HALF_FLOAT` 且依赖扩展，易踩坑）。
+3. **自动曝光数学（自写段）**：几何平均亮度 `L = 2^avgLog`，目标 `EV = log2(KEY/L)`（KEY=0.18 中灰）；指数平滑 `smoothedEV += (target - smoothedEV) * 0.15`，约几帧收敛；`autoEV` 钳 ±4 与滑杆域对齐，避免首帧/极端场景爆 EV。
+4. **1 帧延迟是有意为之**：驱动里先 `render()`（luminance 把本帧测光 RT 写好）再 `readback()`，应用的是上一帧结果；这与 `PassContext.exposureEV` 「曝光只有一条路径」的约束一致。
+5. **隔帧回读是性能故事**：`readRenderTargetPixels` 强制 GPU→CPU 同步、会 stall 管线；每两帧回读一次，既够稳又把这串 stall 变成可展示的「为什么不能每帧 readPixels」论点（命中筛选标准 #3）。
+6. **过曝回收采用方案 a**：仅一个 `uClipView` uniform + 一个分支，改动最小；标红直观展示「这些像素在 8bit 直通下会死白，经 tonemap 被回收」，同时覆盖 S3 的「过曝回收 A/B 对比开关」。标红是诊断视图，不代表最终画面（已写进 shader 注释与面板 hint）。
+7. **直方图随 EV 平移**：分桶用 `(logL + displayEV)`，displayEV 是当前生效曝光（手动 + 自动），所以拖动 EV / 自动收敛时直方图整体左右平移，肉眼可验证。
+
+### 踩坑与修复
+
+1. **首帧回读读到空 RT**：最初把 `readback` 放在 `render()` 之前，第一帧读到未初始化的 luminance RT（垃圾值 → autoEV 跳到钳制上限）。改为「先 render 后 readback、且隔帧开关首帧不触发」，保证首次回读读到的是第一帧真实测光图。
+2. **`scale=1` 带来的闲置 RT**：为让 `uTexel = 1/全分辨率` 正确，luminance `scale=1`，Pipeline 会据此分配一个全分辨率 RGBA8 RT 但本 pass 并不使用（实际写入内部 64×64）。已知小代价（约一屏 RGBA8 内存闲置在池里），换取 uTexel 正确；已在代码注释标注。
+3. **lint 告警是误报（同前）**：`luminance.frag:12` / `tonemap-output.frag:21` 的 `in vec2 vUv` 被静态分析报「not supported for this version」——均以 RawShaderMaterial / GLSL 3.00 加载，`in/out` 合法，运行时由 three.js 注入 `#version 300 es`。与色彩路径无关。
+
+### 验证
+
+- `npm run typecheck`：通过（0 TS 错误）。
+- `npm run build`：通过（637 模块；1.29MB 体积警告为既有，待 `manualChunks` 拆 three）。
+- 待人工目视（环境无 Playwright，未擅自装内核）：
+  1. 切换 `tm` 三档 + 拖 EV，画面与曲线图形状一致；
+  2. 开「过曝回收诊断」：>1 像素标红，关掉后正常；
+  3. 开「自动曝光」：明暗场景切换时 1–2 帧收敛、无可见振荡；手动 EV 在自动模式下作为补偿仍生效；
+  4. 直方图随 EV 左右平移；
+  5. `?ev=-2&tm=agx&autoexposure=1&clipView=1` 打开即复现。
+
+### 遗留 / 下一步
+
+1. **浏览器内验证待补**：环境无 Playwright 内核，上述 5 项需手动在 `npm run dev` 下确认；建议后续补 `npm run smoke`（见 TODO 3.7）。
+2. **单 pass 双线性欠采样近似**：luminance 用 TAPS×TAPS 网格 tap 覆盖区域，已够稳；若要更准可改 2× 级联 downsample，先不引入。
+3. **S4 bloom**：阈值 + 6–8 级 mip 下采样 + 上采样合成，插到 `beauty` 与 `tonemap-output` 之间（在 HDR 线性空间，物理正确）；届时 `hdrParams` 再加 `bloom` 旋钮。
+4. **S5 收尾**：`src/site/demos.ts` 的 `hdr` 条目 status → `done`，如实补 limitations（自动曝光迟滞、半精度暗部条带）。
+5. **p0-gbuffer-hud**：pass 数已 ≥ 3，GPU 计时（`EXT_disjoint_timer_query_webgl2`）现在有意义，可接。
+
+---
+
 ## 2026-10-06 · p0-hdr 步骤 2：三条色调映射曲线实现（Reinhard / ACES / AgX）
 
 ### 目标

@@ -15,6 +15,8 @@ uniform sampler2D tColor;
 uniform vec2 uResolution;
 uniform float uExposureEV;
 uniform int uTonemap;
+/** 过曝回收诊断：开启时把「任一通道 > 1.0（8bit 直通下会死白截断）」的像素染红 */
+uniform int uClipView;
 
 in vec2 vUv;
 out vec4 fragColor;
@@ -108,19 +110,25 @@ void main() {
   color *= exp2(uExposureEV);
 
   // ======================================================================
-  // TODO(S2 · 你来定)：过曝回收怎么呈现
+  // 过曝回收诊断视图（采用方案 a：一个 uClipView 开关，改动最小）。
   //
-  // 这里是最合适的切入点（映射前，还拿得到 > 1 的原始值）。
-  // 两种低成本做法，选一个并把理由记进 DEVLOG：
+  // 切入点就在映射前：此时还拿得到 > 1 的原始 HDR 值。任一通道 > 1 的像素，
+  // 在 8bit 直通路径下会被硬截断成死白、丢失全部高光细节；经 tonemap 后这些值
+  // 被「回收」到 [0,1] 内。开启 uClipView 时把这些像素染红（保留 40% 已映射
+  // 结果，能同时看到回收后的画面），直观展示「哪些高光被救了回来」。
   //
-  //   a) 加一个 uClipView 开关：映射前把任一通道 > 1 的像素标红，
-  //      再走完映射 —— 直观，改动最小（一个 uniform + 一个分支）。
-  //   b) 复用调试视图机制：新增一个 clip-view pass 插在本 pass 之前。
-  //      更符合现有架构，但要新建文件。
-  //
-  // 无论选哪种，记得在 demo 页的 limitations 里写清"标红是诊断视图，
-  // 不代表最终画面"，避免被误解成渲染瑕疵。
+  // 注意：标红是诊断视图，不代表最终画面；demo 页 limitations 需写明这一点。
   // ======================================================================
+  if (uClipView == 1) {
+    float over = max(max(color.r, color.g), color.b);
+    if (over > 1.0) {
+      vec3 recovered = clamp(tonemap(color, uTonemap), 0.0, 65504.0);
+      vec3 shown = mix(linearToSrgb(recovered), vec3(1.0, 0.0, 0.0), 0.55);
+      fragColor = vec4(shown, 1.0);
+      return;
+    }
+  }
+
   vec3 mapped = tonemap(color, uTonemap);
 
   fragColor = vec4(linearToSrgb(clamp(mapped, 0.0, 65504.0)), 1.0);
