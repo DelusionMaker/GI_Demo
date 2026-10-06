@@ -64,7 +64,7 @@ export const HistogramPanel = observer(function HistogramPanel() {
   }, [hdrStore.histogram])
 
   return (
-    <div className="curve-graph">
+    <div className="histogram-graph">
       <canvas
         ref={canvasRef}
         style={{ width: WIDTH, height: HEIGHT }}
