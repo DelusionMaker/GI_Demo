@@ -81,7 +81,11 @@ export class HDRPipeline {
     if (options.samples !== undefined) this.beauty.target.samples = options.samples
 
     // GPU 计时只在设备支持 EXT_disjoint_timer_query_webgl2 时开启（capabilities 已探测）
-    this.pipeline = new Pipeline({ hdr: this.hdrSupported, gpuTiming: capabilitiesStore.timerQuery })
+    this.pipeline = new Pipeline({
+      hdr: this.hdrSupported,
+      gpuTiming: capabilitiesStore.timerQuery,
+      mrt: capabilitiesStore.mrt,
+    })
     this.pipeline.addPass(this.beauty)
     this.pipeline.addPass(this.luminancePass)
     this.pipeline.addPass(this.bloomPass)

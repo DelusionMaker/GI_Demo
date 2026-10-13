@@ -1,5 +1,5 @@
 import { actionBound, computed, makeObservable, observable } from 'mobx'
-import type * as THREE from 'three'
+import * as THREE from 'three'
 
 export type Backend = 'webgl2' | 'webgpu'
 
@@ -25,6 +25,8 @@ export class CapabilitiesStore {
   floatLinear = false
   /** GPU 计时扩展是否可用 —— 没有它只能看帧时间，无法归因到 pass */
   timerQuery = false
+  /** 多渲染目标（MRT）是否可用 —— G-buffer 的前提；软件渲染器（SwiftShader）常不支持 */
+  mrt = false
   maxAnisotropy = 1
 
   constructor() {
@@ -35,6 +37,7 @@ export class CapabilitiesStore {
       colorBufferFloat: observable,
       floatLinear: observable,
       timerQuery: observable,
+      mrt: observable,
       maxAnisotropy: observable,
       isWebGPU: computed,
       label: computed,
@@ -64,6 +67,54 @@ export class CapabilitiesStore {
     this.colorBufferFloat = Boolean(gl.getExtension('EXT_color_buffer_float'))
     this.floatLinear = Boolean(gl.getExtension('OES_texture_float_linear'))
     this.timerQuery = Boolean(gl.getExtension('EXT_disjoint_timer_query_webgl2'))
+
+    // MRT：软件渲染器（SwiftShader）常声称 MRT 帧缓冲「完整」却静默渲染成黑屏，
+    // 因此不能只查 checkFramebufferStatus，必须真渲染一帧再回读像素验证可写性。
+    let mrtSupported = false
+    try {
+      const test = new THREE.WebGLRenderTarget(4, 4, {
+        count: 2,
+        type: THREE.UnsignedByteType,
+        format: THREE.RGBAFormat,
+        depthBuffer: false,
+        stencilBuffer: false,
+        generateMipmaps: false,
+      })
+      // 第 2 附件用半精度，复刻真实 G-buffer（gNormal 为 RGBA16F），一并验证可渲染性
+      const second = test.textures[1]
+      if (second && test.textures[0]) {
+        test.textures[1].type = THREE.HalfFloatType
+
+        // 纯红全屏四边形渲染进 MRT 的第 0 附件
+        const probeScene = new THREE.Scene()
+        const probeCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
+        const probeMat = new THREE.MeshBasicMaterial({ color: 0xff0000 })
+        const probeMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), probeMat)
+        probeScene.add(probeMesh)
+
+        renderer.setRenderTarget(test)
+        renderer.setClearColor(0x000000, 0)
+        renderer.clear(true, false, false)
+        renderer.render(probeScene, probeCam)
+
+        const gl2 = gl as WebGL2RenderingContext
+        const buf = new Uint8Array(4)
+        gl2.readBuffer(gl2.COLOR_ATTACHMENT0)
+        gl2.readPixels(0, 0, 1, 1, gl2.RGBA, gl2.UNSIGNED_BYTE, buf)
+        renderer.setRenderTarget(null)
+
+        // 非全黑即代表 MRT 真的能把颜色写进第 0 附件（规避 SwiftShader 静默黑屏）
+        mrtSupported = buf[0] + buf[1] + buf[2] > 24
+
+        probeMesh.geometry.dispose()
+        probeMat.dispose()
+        test.dispose()
+      }
+    } catch {
+      mrtSupported = false
+    }
+    this.mrt = mrtSupported
+
     this.maxAnisotropy = renderer.capabilities.getMaxAnisotropy()
   }
 }

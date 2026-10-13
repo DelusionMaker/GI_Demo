@@ -26,6 +26,11 @@ export interface PipelineOptions {
    * 面板端对应展示「GPU 计时不可用」。
    */
   gpuTiming?: boolean
+  /**
+   * 是否启用 G-buffer MRT（多渲染目标）。由调用方依据 capabilities.mrt 判定；
+   * 为 false 时即便 pass 声明了 mrt 也退化为单目标（优雅降级）。
+   */
+  mrt?: boolean
 }
 
 /**
@@ -60,9 +65,13 @@ export class Pipeline {
   private height = 0
   private frame = 0
   private inputDepth: THREE.DepthTexture | null = null
+  /** G-buffer MRT（p0-gbuffer-hud）：beauty 用 MRT 渲染时暂存，供调试视图与后续 SSR / SSGI 读取 */
+  private gBuffer: THREE.WebGLRenderTarget | null = null
 
   /** 是否启用 GPU 逐 pass 计时（来自调用方 capabilities.timerQuery） */
   private readonly gpuTiming: boolean
+  /** 是否启用 G-buffer MRT（来自调用方 capabilities.mrt） */
+  private readonly mrtSupported: boolean
   /** EXT_disjoint_timer_query_webgl2（懒加载并缓存，可能为 null；类型用 any：各 TS lib 对该扩展的全局声明名不一致） */
   private timerExt: any = null
   /** 持有扩展时的 GL 上下文（用于 deleteQuery 清理） */
@@ -74,6 +83,7 @@ export class Pipeline {
     this.hdrActive = options.hdr
     this.hdrFormat = options.hdr ? 'RGBA16F' : 'RGBA8'
     this.gpuTiming = options.gpuTiming ?? false
+    this.mrtSupported = options.mrt ?? false
   }
 
   get stats(): PipelineStats {
@@ -111,6 +121,11 @@ export class Pipeline {
 
   getPassNames(): string[] {
     return this.passes.map((pass) => pass.name)
+  }
+
+  /** 取 G-buffer MRT（若当前链未启用 MRT 则为 null） */
+  getGBuffer(): THREE.WebGLRenderTarget | null {
+    return this.gBuffer
   }
 
   /** 物理像素尺寸（CSS 尺寸 × DPR）。render() 内还会用 drawingBufferSize 复核一次。 */
@@ -169,6 +184,10 @@ export class Pipeline {
       const target = pass.toScreen ? null : this.acquire(pass, width, height)
 
       if (target?.depthTexture) this.inputDepth = target.depthTexture
+      // 暂存 G-buffer MRT，供调试视图（S3）与后续 SSR / SSGI 读取（仅在真正启用 MRT 时）
+      if (target && this.mrtSupported && pass.target.mrt && pass.target.mrt.length > 1) {
+        this.gBuffer = target
+      }
 
       const ctx: PassContext = {
         renderer,
@@ -214,7 +233,7 @@ export class Pipeline {
       if (pass.source === 'scene') {
         renderer.setRenderTarget(target)
         renderer.render(scene, camera)
-        output = target ? target.texture : null
+        output = target ? target.textures[0] : null
       } else if (pass.render) {
         output = pass.render(ctx, target)
       }
@@ -299,7 +318,8 @@ export class Pipeline {
     const format = this.resolveFormat(pass.target.format)
     const samples = pass.target.samples ?? 0
     const depth = pass.target.depthTexture ? 1 : 0
-    const key = `${format}|${pass.target.filter}|${samples}|${depth}|${width}x${height}`
+    const mrtTag = pass.target.mrt && pass.target.mrt.length > 1 ? `mrt${pass.target.mrt.length}` : 's'
+    const key = `${format}|${pass.target.filter}|${samples}|${depth}|${mrtTag}|${width}x${height}`
 
     const free = this.pool.find((entry) => entry.key === key && !entry.busy)
     if (free) {
@@ -307,7 +327,7 @@ export class Pipeline {
       return free.target
     }
 
-    const target = createRenderTarget(format, pass.target, width, height)
+    const target = createRenderTarget(format, pass.target, width, height, this.mrtSupported)
     this.pool.push({ key, target, busy: true })
     return target
   }
@@ -324,6 +344,7 @@ export class Pipeline {
         entry.target.dispose()
       })
       this.pool.length = 0
+      this.gBuffer = null
       return
     }
     this.pool.forEach((entry) => {
@@ -337,6 +358,7 @@ function createRenderTarget(
   spec: PassTargetSpec,
   width: number,
   height: number,
+  mrtSupported: boolean,
 ): THREE.WebGLRenderTarget {
   const hdr = format === 'RGBA16F'
   const filter = spec.filter === 'linear' ? THREE.LinearFilter : THREE.NearestFilter
@@ -344,7 +366,9 @@ function createRenderTarget(
   const depthTexture = spec.depthTexture ? new THREE.DepthTexture(width, height) : undefined
   if (depthTexture) depthTexture.format = THREE.DepthFormat
 
-  const target = new THREE.WebGLRenderTarget(width, height, {
+  const useMRT = Boolean(mrtSupported && spec.mrt && spec.mrt.length > 1)
+
+  const options: THREE.RenderTargetOptions = {
     type: hdr ? THREE.HalfFloatType : THREE.UnsignedByteType,
     format: THREE.RGBAFormat,
     minFilter: filter,
@@ -354,10 +378,31 @@ function createRenderTarget(
     depthBuffer: true,
     stencilBuffer: false,
     generateMipmaps: false,
-  })
+  }
+  // MRT：多渲染目标（G-buffer）。count 不一定在 RenderTargetOptions 类型里，故按需补上
+  if (useMRT) (options as Record<string, unknown>).count = spec.mrt!.length
+
+  const target = new THREE.WebGLRenderTarget(width, height, options)
   // 构造后赋值：采样数在首次使用时惰性读取，这样写可避开 options 的类型定义差异
   target.samples = spec.samples ?? 0
-  target.texture.colorSpace = THREE.NoColorSpace
-  target.texture.name = `gi-postfx-${format}-${width}x${height}`
+
+  if (useMRT) {
+    // 逐附件定制格式 / 过滤 / 色彩空间（G-buffer 是数据缓冲，统一 NoColorSpace）
+    // 防御：附件数可能少于声明的 mrt（不支持 MRT 的环境），逐张判空避免越界
+    const n = Math.min(spec.mrt!.length, target.textures.length)
+    for (let i = 0; i < n; i++) {
+      const att = spec.mrt![i]
+      const tex = target.textures[i]
+      if (!tex) continue
+      tex.type = att.format === 'RGBA16F' ? THREE.HalfFloatType : THREE.UnsignedByteType
+      tex.minFilter = att.filter === 'linear' ? THREE.LinearFilter : THREE.NearestFilter
+      tex.magFilter = att.filter === 'linear' ? THREE.LinearFilter : THREE.NearestFilter
+      tex.colorSpace = THREE.NoColorSpace
+      tex.name = `gbuffer-${att.name}`
+    }
+  } else {
+    target.texture.colorSpace = THREE.NoColorSpace
+    target.texture.name = `gi-postfx-${format}-${width}x${height}`
+  }
   return target
 }

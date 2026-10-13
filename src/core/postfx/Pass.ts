@@ -20,6 +20,13 @@ export interface PassContext {
   exposureEV: number
 }
 
+export interface GBufferAttachment {
+  /** 附件名（用于调试视图与后续 SSR / SSGI 读取） */
+  name: 'gAlbedo' | 'gNormal' | 'gMRAO'
+  format: TargetFormat
+  filter: 'linear' | 'nearest'
+}
+
 export interface PassTargetSpec {
   format: TargetFormat
   filter: 'linear' | 'nearest'
@@ -37,6 +44,12 @@ export interface PassTargetSpec {
    * 到 p0-gbuffer-hud 真正读深度时必须复核（或届时改走 TAA）。
    */
   depthTexture?: boolean
+  /**
+   * G-buffer MRT 附件（p0-gbuffer-hud）。存在且长度 > 1 时创建多渲染目标；
+   * 下游以 `target.textures[0]`（gAlbedo）作为 beauty 颜色继续后续链路。
+   * 不设置或长度为 1 时退化为普通单目标。
+   */
+  mrt?: GBufferAttachment[]
 }
 
 export interface Pass {

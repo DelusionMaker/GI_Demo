@@ -22,12 +22,18 @@ export class BeautyPass implements Pass {
     format: 'RGBA16F' as const,
     filter: 'linear' as const,
     /**
-     * 补回因渲到 RT 而丢失的 MSAA（渲染器的 antialias 只作用于默认后缓冲）。
-     * 移动端 / 降级档应置 0。
+     * MSAA 在 MRT 下的解析稳定性是已知风险（见 TODO「p0-gbuffer-hud 拆解」）；
+     * G-buffer 脚手架阶段先用 0，保证多附件可用，MSAA 恢复 / 改 TAA 留待 S3 决策。
      */
-    samples: 4,
+    samples: 0,
     /** 深度纹理在 RT 创建时即挂好，避免 p0-gbuffer-hud / SSR / SSGI 回头改 RT */
     depthTexture: true,
+    /** G-buffer MRT：albedo（供下游当 beauty）/ normal / MRAO。S2 由 GBufferMaterial 填充 */
+    mrt: [
+      { name: 'gAlbedo' as const, format: 'RGBA8' as const, filter: 'linear' as const },
+      { name: 'gNormal' as const, format: 'RGBA16F' as const, filter: 'linear' as const },
+      { name: 'gMRAO' as const, format: 'RGBA8' as const, filter: 'linear' as const },
+    ],
   }
 
   dispose(): void {

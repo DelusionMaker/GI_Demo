@@ -53,6 +53,44 @@
 
 ---
 
+## 2026-10-13 · p0-gbuffer-hud 步骤 1：G-buffer MRT 脚手架（S1）
+
+### 目标
+
+把链首 `beauty` 从单 RGBA16F 升级为可声明 MRT 的底座：基础设施就位，但 G-buffer 各附件**实际由 S2 的 `GBufferMaterial` 填充**。本步只铺管线，下游 HDR 链仍以 `textures[0]`（gAlbedo）当 beauty，观感零回归。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/Pass.ts` | 改造 | 新增 `GBufferAttachment` 类型；`PassTargetSpec.mrt?: GBufferAttachment[]` |
+| `src/core/postfx/Pipeline.ts` | 改造 | `createRenderTarget` 支持 MRT（`count` + 逐附件格式/过滤/NoColorSpace）；`acquire` 池 key 纳入 `mrtTag`；渲染循环暂存 `gBuffer` 并统一 `output = target.textures[0]`；新增 `getGBuffer()`；`releaseAll` 清空引用 |
+| `src/core/postfx/passes/BeautyPass.ts` | 改造 | `target` 声明 `mrt: [gAlbedo(RGBA8), gNormal(RGBA16F), gMRAO(RGBA8)]`，`samples` 暂置 0（MSAA×MRT 解析风险留 S3 决策） |
+| `src/core/postfx/HDRPipeline.ts` | 改造 | 仅透传 `mrt: capabilitiesStore.mrt`（不读 store，保持渲染核心无状态层依赖） |
+| `src/core/capabilities.ts` | 改造 | `mrt` 能力位改为**真渲染+回读**探测（见下），替代脆弱的 `checkFramebufferStatus` |
+
+### 关键设计决策
+
+1. **MRT 与单目标统一为 `textures[0]`**：下游所有 pass 读 `target.textures[0]`，MRT 下即 gAlbedo、单目标下即原 `texture`，无需改动各下游 pass。
+2. **能力探测用「渲染+回读」而非「帧缓冲完整性」**：本环境的软件渲染器（SwiftShader）会对 MRT 帧缓冲返回 `FRAMEBUFFER_COMPLETE`，却静默渲染成黑屏，导致 `checkFramebufferStatus` 误判为可用。改为渲染一个纯红四边形进 MRT 第 0 附件、再 `readPixels` 回读，非全黑才判为可用。这是与项目「优雅降级」哲学一致的硬核正确性保障。
+
+### 踩坑与修复
+
+- **首版（仅 `checkFramebufferStatus` 探测）在 headless smoke 下全黑**：帧缓冲被判为完整但 MRT 渲染无效，整条 HDR 链输出黑屏、smoke 4 项失败。改用「渲染+回读」探测后，`mrt` 在 headless 正确判否 → 回退单目标 → smoke 5 passed。真实 GPU 上回读为红 → `mrt=true` → MRT 真正生效。
+
+### 验证
+
+- `npm run typecheck`：通过。
+- `npm run smoke`：5 passed（headless 下 MRT 被探测为不可用、自动降级，画面均值 74.86 / 标准差 40.83，与单通道观感一致；A/B 差 0.30；bloom 用例正常）。
+
+### 遗留 / 下一步
+
+1. **S2（你自写）**：`GBufferMaterial`（GLSL3 多 `out`），把 hello-cube 换成它，处理法线编码/精度；这是作品集硬货。
+2. **S3**：调试视图接 `gAlbedo/gNormal/gMRAO`（复用现有 `hdrDebug` 截断机制）；`MSAA(4)×MRT` 解析性复核（不稳则记 limitations 降级 `samples:0` 或改 TAA）。
+3. G-buffer MRT 目前仅在能力探测通过时启用；请在本机真实 GPU 上确认 MRT 路径跑通、各附件内容正确。
+
+---
+
 ## 2026-10-13 · p0-gbuffer-hud 首刀：GPU 逐 pass 计时（EXT_disjoint_timer_query_webgl2）
 
 ### 目标

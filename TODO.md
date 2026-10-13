@@ -59,7 +59,7 @@ npm run build      # 生产构建
   - [ ] 截图 / 录制工具接口（封面 GIF + 视觉回归）→ eng-shared 接入
   - [ ] monorepo 拆分 → eng-shared
 - [x] **p0-hdr** HDR 管线与色调映射（ACES / AgX、自动曝光、物理 bloom）　**✅ S1–S5 已完成（见 DEVLOG 2026-10-13）**
-- [~] **p0-gbuffer-hud** G-buffer MRT + 性能 HUD（GPU 计时已接，G-buffer MRT 待做）
+- [~] **p0-gbuffer-hud** G-buffer MRT + 性能 HUD（GPU 计时已接；G-buffer MRT 的 S1 脚手架完成，S2 材质待你自写）
 - [ ] **p0-assets** 准备 3 个场景资产（Cornell box / 室内 / 户外）
 
 ### 阶段 1 · 直接光照（2–3 周）
@@ -342,7 +342,58 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 
 ---
 
-## 四、参考：规划约束
+## 四、p0-gbuffer-hud 拆解（G-buffer MRT：S1–S3）
+
+### 4.0 目标与定位
+
+把链首 `beauty` 从单张 `RGBA16F` 升级为 **MRT**（albedo / normal / MRAO + depth），为后续 SSR / shadow / deep-GI 提供可读原料。
+本阶段 **PBR 不做**，下游 HDR 链（luminance → bloom → tonemap）仍以 `gAlbedo`（MRT 的 `textures[0]`）当 beauty 颜色，观感零回归。
+
+**为什么做这一项（阶段 0 第 2 环）**：G-buffer 是所有延迟 / 屏幕空间特效的「原料层」。先铺好，SSR / SSGI / shadow 都变成「读 G-buffer」的增量工作，不返工。
+
+### 4.1 附件布局决策（S2 由你定稿）
+
+| 附件 | 格式 | 内容 |
+| --- | --- | --- |
+| `gAlbedo` | RGBA8 | 反照率（颜色，下游当 beauty） |
+| `gNormal` | RGBA16F | 世界/视图法线（需精度，防 banding） |
+| `gMRAO` | RGBA8 | metallic / roughness / ao / emissive |
+| depth | DepthTexture | 深度（SSR / SSGI 复用） |
+
+> 精度取舍（RGBA8 vs RGBA16F）是真实工程决策，面试能讲；当前脚手架先按上表落，S2 由你写 `GBufferMaterial` 时定稿。
+
+### 4.2 落地步骤（含每步验收点）
+
+| 步骤 | 内容 | 验收点 | 状态 |
+| --- | --- | --- | --- |
+| **S1** | MRT 基础设施：BeautyPass.target 改为 MRT（3 附件）；Pipeline 创建多渲染目标、把 `gAlbedo` 作下游输入、暂存 G-buffer 供调试 / 后续读取 | G-buffer 渲染无 WebGL error；下游以 gAlbedo 为输入，观感与单通道一致（回归） | ✅ 脚手架完成（2026-10-13） |
+| **S2** | **你自写核心**：`GBufferMaterial`（GLSL3，多 `out` 输出 albedo/normal/mrao）、把 hello-cube 的 meshStandardMaterial 换成它、处理法线编码与精度 | 各附件内容合理（albedo≈原色、normal 表面有渐变、mrao 分通道可见） | ⬜ 待你实现 |
+| **S3** | 调试可视化 + 接线：`hdrDebug` 增加 gAlbedo/gNormal/gMRAO，HUD 下拉接上并采样对应附件呈现；smoke 加 G-buffer 渲染断言 | 调试视图可切三层且内容合理；`npm run typecheck` / `smoke` 通过 | ⬜ 待做（脚手架可代劳接线，调试 shader 你写） |
+
+### 4.3 验收清单
+
+- [ ] MRT 渲染无 console / WebGL error
+- [ ] 调试视图可切 albedo / normal / mrao，且各层内容合理（normal 表面有渐变、mrao 分通道可见）
+- [ ] 现有 HDR 链路以 gAlbedo 为输入，观感与单通道时一致（回归）
+- [ ] `MSAA(4) + depthTexture` 在 MRT 下正常解析（供后续 SSR）；若不稳，明确降级 `samples:0` 并记 limitations
+- [ ] `npm run typecheck` 与 `smoke` 通过
+
+### 4.4 风险与注意事项
+
+- **MSAA × MRT × DepthTexture 解析**（已知风险）：脚手架阶段 `samples:0` 保证可用，MSAA 恢复或改 TAA 留作 S3 决策。
+- **normal 编码空间与精度**：world / view 选择 + RGBA16F 防 banding。
+- **MRT 附件可渲染性**：`RGBA16F` 需 `EXT_color_buffer_float`（已探测 `colorBufferFloat` ✓）。
+- **下游消费**：Pipeline 统一用 `target.textures[0]` 作为本环输出，MRT 下即 gAlbedo，单目标下即原 texture，无需改动各下游 pass。
+
+### 4.5 本轮明确不做
+
+- **PBR / IBL**：下一阶段 p1-pbr-ibl 的事；G-buffer 只是底座，forward / deferred 决策在那一步再做。
+- **SSR / shadow / deep-GI**：依赖 G-buffer，但属阶段 1+。
+- **G-buffer 各层缩略图可视化**：S3 调试视图覆盖即可，不必单独做缩略图面板。
+
+---
+
+## 五、参考：规划约束
 
 ### 推荐主线组合（6 个成品）
 
