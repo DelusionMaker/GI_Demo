@@ -33,7 +33,7 @@ export const HDRPanel = observer(function HDRPanel() {
   ]
 
   return (
-    <Panel title="HDR 链路">
+    <Panel title="HDR 链路" scroll>
       <div className="ctl-row">
         <span className="ctl-label">RT 档位</span>
         <span className={`badge ${runtime.hdrActive ? 'badge-ok' : 'badge-warn'}`}>
@@ -92,6 +92,28 @@ export const HDRPanel = observer(function HDRPanel() {
         digits={1}
         value={knobs.bloomIntensity}
         onChange={(value) => hdrParams.set({ bloomIntensity: value })}
+      />
+
+      <Slider
+        label="Bloom 阈值"
+        hint="高于该亮度的像素才参与光晕，HDR 线性空间"
+        min={0}
+        max={4}
+        step={0.1}
+        digits={1}
+        value={knobs.bloomThreshold}
+        onChange={(value) => hdrParams.set({ bloomThreshold: value })}
+      />
+
+      <Slider
+        label="Bloom Knee"
+        hint="soft-knee 半宽：阈值附近的柔和过渡区间"
+        min={0}
+        max={2}
+        step={0.05}
+        digits={2}
+        value={knobs.bloomKnee}
+        onChange={(value) => hdrParams.set({ bloomKnee: value })}
       />
 
       <Toggle

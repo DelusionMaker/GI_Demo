@@ -51,6 +51,7 @@ export class BloomPass implements Pass {
   private readonly compositeQuad: FullscreenQuad
 
   private mips: THREE.WebGLRenderTarget[] = []
+  private scratch: THREE.WebGLRenderTarget[] = []
   private mipW = 0
   private mipH = 0
 
@@ -142,8 +143,12 @@ export class BloomPass implements Pass {
       this.upQuad.material.uniforms.tInput.value = coarser.texture
       this.upQuad.material.uniforms.tAccum.value = finer.texture
       this.upQuad.material.uniforms.uTexel.value.set(1 / coarser.width, 1 / coarser.height)
-      // 渲回更细的 mip：finer = finer + upsample(coarser)
-      this.upQuad.render(r, finer)
+      // 渲到独立的 scratch（避免「读 finer 同时写 finer」的 feedback loop），再 swap 引用。
+      // swap 后 mips[i-1] 持有本次累加结果，供更细一级继续叠加。
+      this.upQuad.render(r, this.scratch[i - 1])
+      const tmp = this.mips[i - 1]
+      this.mips[i - 1] = this.scratch[i - 1]
+      this.scratch[i - 1] = tmp
     }
 
     // 4) 合成：scene + bloom * intensity → 全分辨率 HDR 输出 RT
@@ -165,25 +170,32 @@ export class BloomPass implements Pass {
     let cw = bw
     let ch = bh
     for (let i = 0; i < MIP_LEVELS; i += 1) {
-      const rt = new THREE.WebGLRenderTarget(cw, ch, {
-        type: THREE.HalfFloatType,
-        format: THREE.RGBAFormat,
-        minFilter: THREE.LinearFilter,
-        magFilter: THREE.LinearFilter,
-        depthBuffer: false,
-        stencilBuffer: false,
-        generateMipmaps: false,
-      })
-      rt.texture.colorSpace = THREE.NoColorSpace
-      this.mips.push(rt)
+      this.mips.push(this.makeMip(cw, ch))
+      this.scratch.push(this.makeMip(cw, ch))
       cw = Math.max(1, cw >> 1)
       ch = Math.max(1, ch >> 1)
     }
   }
 
+  private makeMip(cw: number, ch: number): THREE.WebGLRenderTarget {
+    const rt = new THREE.WebGLRenderTarget(cw, ch, {
+      type: THREE.HalfFloatType,
+      format: THREE.RGBAFormat,
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      depthBuffer: false,
+      stencilBuffer: false,
+      generateMipmaps: false,
+    })
+    rt.texture.colorSpace = THREE.NoColorSpace
+    return rt
+  }
+
   private disposeMips(): void {
     this.mips.forEach((m) => m.dispose())
+    this.scratch.forEach((m) => m.dispose())
     this.mips = []
+    this.scratch = []
   }
 
   dispose(): void {

@@ -665,6 +665,9 @@ code {
   backdrop-filter: blur(10px);
   box-shadow: var(--shadow);
   overflow: hidden;
+  /* 允许在 .hud-slot 内收缩，否则默认 min-height:auto 会拒绝收缩、
+     导致外层 slot 撑满内容、overflow-y:auto 永远不触发（底部控件被挤出且无法滚动） */
+  min-height: 0;
 }
 
 .panel-head {
@@ -694,6 +697,11 @@ code {
   gap: 2px;
   padding: 10px 12px 12px;
   /* 滚动交给 .hud-slot 统一处理，避免出现嵌套滚动容器 */
+}
+
+.panel-body-scroll {
+  max-height: 40vh;
+  overflow-y: auto;
 }
 
 .panel-note {

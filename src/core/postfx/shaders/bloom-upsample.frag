@@ -17,8 +17,18 @@ out vec4 fragColor;
 // 这部分数学由你本人实现。
 // ==========================================================================
 vec3 upsample(vec2 uv, vec2 texel) {
-  // TODO(S4 · 你来写)：返回 tInput 在 uv 处的上采样结果
-  return texture(tInput, uv).rgb; // 占位：先双线性取 1 次，待你替换为真正的上采样
+  // 返回 tInput 在 uv 处的上采样结果
+  vec3 s = texture(tInput, uv + texel * vec2(-1.0, -1.0)).rgb * 1.0
+  + texture(tInput, uv + texel * vec2(0.0, -1.0)).rgb * 2.0
+  + texture(tInput, uv + texel * vec2(1.0, -1.0)).rgb * 1.0
+  + texture(tInput, uv + texel * vec2(-1.0, 0.0)).rgb * 2.0
+  + texture(tInput, uv + texel * vec2(0.0, 0.0)).rgb * 4.0
+  + texture(tInput, uv + texel * vec2(1.0, 0.0)).rgb * 2.0
+  + texture(tInput, uv + texel * vec2(-1.0, 1.0)).rgb * 1.0
+  + texture(tInput, uv + texel * vec2(0.0, 1.0)).rgb * 2.0
+  + texture(tInput, uv + texel * vec2(1.0, 1.0)).rgb * 1.0;
+
+  return s / 16.0;
 }
 
 void main() {

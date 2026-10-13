@@ -6,10 +6,12 @@ export interface PanelProps {
   children: ReactNode
   onReset?: () => void
   defaultOpen?: boolean
+  /** 内容超出时面板本体内部滚动，而非交给外层 .hud-slot 统一滚动 */
+  scroll?: boolean
 }
 
 /** 可折叠参数面板。移动端默认提供折叠能力，避免盖满画布。 */
-export function Panel({ title, children, onReset, defaultOpen = true }: PanelProps) {
+export function Panel({ title, children, onReset, defaultOpen = true, scroll }: PanelProps) {
   const [open, setOpen] = useState(defaultOpen)
   return (
     <div className="panel">
@@ -32,7 +34,9 @@ export function Panel({ title, children, onReset, defaultOpen = true }: PanelPro
           </button>
         </div>
       </div>
-      {open ? <div className="panel-body">{children}</div> : null}
+      {open ? (
+        <div className={`panel-body${scroll ? ' panel-body-scroll' : ''}`}>{children}</div>
+      ) : null}
     </div>
   )
 }

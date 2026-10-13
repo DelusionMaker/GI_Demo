@@ -27,6 +27,10 @@ export type HdrParams = {
   bloom: boolean
   /** Bloom 强度（HDR 线性空间叠加系数） */
   bloomIntensity: number
+  /** Bloom 亮度阈值（HDR 线性空间，通常 ~1.0） */
+  bloomThreshold: number
+  /** Bloom soft-knee 半宽：阈值附近的柔和过渡区间 */
+  bloomKnee: number
 }
 
 /** 注意：defaults 必须显式标注类型，否则 boolean 会被推断成字面量类型 */
@@ -39,6 +43,8 @@ export const HDR_PARAM_DEFAULTS: HdrParams = {
   clipView: false,
   bloom: false,
   bloomIntensity: 1,
+  bloomThreshold: 0.8,
+  bloomKnee: 0.5,
 }
 
 export const hdrParams = createDemoStore(HDR_PARAM_DEFAULTS)

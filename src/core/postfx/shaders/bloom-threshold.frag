@@ -21,8 +21,13 @@ const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 // 这部分数学由你本人实现并能在 demo 文案里讲清。
 // ==========================================================================
 vec3 extractBright(vec3 c) {
-  // TODO(S4 · 你来写)：返回高于阈值的亮度（带 soft-knee 过渡），其余压到 0
-  return c; // 占位：先原样输出，待你替换为真正的阈值提取
+  // 返回高于阈值的亮度（带 soft-knee 过渡），其余压到 0
+  float lum = dot(c, LUMA);
+  float softKnee = clamp(lum - uThreshold + uKnee, 0.0, 2.0 * uKnee);
+  softKnee = softKnee * softKnee / (4.0 * uKnee + 1e-4); // 二次曲线平滑过渡
+  float contribution = max(lum - uThreshold, softKnee);
+  c = c * contribution / max(lum, 1e-4); // 归一化为 0..1 缩放因子，保留色相
+  return c;
 }
 
 void main() {

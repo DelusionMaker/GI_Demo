@@ -14,10 +14,17 @@ out vec4 fragColor;
 // 建议 13-tap（COD）或简单的双线性 4-tap（Karis average）；
 // 注意按源 mip 的 texel 尺寸做半纹素偏移，避免降采样漏掉中间样本。
 // 这部分数学由你本人实现。
+// TODO: 13-tap (提升画质)
 // ==========================================================================
 vec3 downsample(vec2 uv, vec2 texel) {
-  // TODO(S4 · 你来写)：返回对 tInput 在 uv 处的下采样结果
-  return texture(tInput, uv).rgb; // 占位：先双线性取 1 次，待你替换为真正的滤波器
+  // 返回对 tInput 在 uv 处的下采样结果
+  vec2 offset = texel * 0.5; // 采样偏移: 半纹素偏移，吃到相邻 2×2 的双侧
+  vec4 sum = texture(tInput, uv + vec2(-offset.x, -offset.y))
+  + texture(tInput, uv + vec2(offset.x, -offset.y))
+  + texture(tInput, uv + vec2(-offset.x, offset.y))
+  + texture(tInput, uv + vec2(offset.x, offset.y));
+
+  return (sum * 0.25).rgb;
 }
 
 void main() {

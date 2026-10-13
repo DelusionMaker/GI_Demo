@@ -252,4 +252,41 @@ test.describe('p0-hdr · HDR 链路冒烟', () => {
     await expect(page.locator(`${HDR_PANEL} ${EV_SLIDER}`)).toHaveValue('-2')
     console.log('[URL] 重新打开后参数已回填到控件')
   })
+
+  test('Bloom 开启后编译运行无报错且画面有可见高光光晕', async ({ page }) => {
+    const errors: string[] = []
+    const pageErrors: string[] = []
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') errors.push(msg.text())
+    })
+    page.on('pageerror', (err) => pageErrors.push(String(err)))
+
+    // 强制开启 bloom 并压低阈值 / 提高强度，确保场景里有足够亮像素被提取，
+    // 从而 bloom 必然产生可见变化（否则 A/B 无法证明 pass 真的跑了）。
+    await page.goto('/d/hello-cube?speed=0&bloom=1&bloomThreshold=0.3&bloomIntensity=2')
+    await expect(page.locator('canvas').first()).toBeVisible()
+    await page.waitForTimeout(1500)
+
+    const bloomOn = await shootClean(page, '07-bloom-on')
+    const statsOn = luminanceStats(bloomOn)
+    console.log(`[Bloom] 开启 亮度均值=${statsOn.mean.toFixed(2)} 标准差=${statsOn.stddev.toFixed(2)}`)
+    expect(statsOn.stddev, 'bloom 开启后画面异常（疑似空白/黑屏）').toBeGreaterThan(5)
+
+    // 关掉 bloom（同阈值，排除阈值本身影响），做像素级 A/B
+    await page.goto('/d/hello-cube?speed=0&bloom=0&bloomThreshold=0.3')
+    await page.waitForTimeout(1200)
+    const bloomOff = await shootClean(page, '08-bloom-off')
+
+    const diff = diffPng(bloomOff, bloomOn)
+    console.log(
+      `[Bloom] A/B 平均差=${diff.meanAbs.toFixed(3)} 最大差=${diff.maxAbs} 差异>8 像素占比=${(diff.overRatio * 100).toFixed(3)}%`,
+    )
+    // bloom 必须让部分像素发生变化（高光光晕），否则等于 pass 没生效
+    expect(diff.maxAbs, 'bloom 开启后画面与关闭无差异：pass 可能未生效 / 阈值过高').toBeGreaterThan(1)
+    expect(diff.overRatio, 'bloom 影响像素占比过低：pass 可能未生效').toBeGreaterThan(0.001)
+
+    // GLSL 编译失败会以 console error / pageerror 形式暴露
+    expect(pageErrors, `pageerror: ${pageErrors.join(' | ')}`).toHaveLength(0)
+    expect(errors, `console error: ${errors.join(' | ')}`).toHaveLength(0)
+  })
 })
