@@ -26,6 +26,7 @@ export type { PassTiming }
  *   2. EV 滑杆 + ACES / AgX / Reinhard 曲线切换
  *   3. 物理 bloom：半分辨率 mip 链（先加 bloom 后 tonemap）
  *   4. 自动曝光：mip 测光 + 跨帧异步回读 + 帧率无关适应
+ *   5. GPU 逐 pass 计时：EXT_disjoint_timer_query_webgl2（p0-gbuffer-hud 首刀）
  *
  * ⚠️ 前置约束（步骤 1 记录有误，已修正）：色调映射必须全局关闭，
  * 但**仅靠 createRenderer 里设 toneMapping = NoToneMapping 是不够的** ——
@@ -79,7 +80,8 @@ export class HDRPipeline {
     this.hdrSupported = capabilitiesStore.colorBufferFloat
     if (options.samples !== undefined) this.beauty.target.samples = options.samples
 
-    this.pipeline = new Pipeline({ hdr: this.hdrSupported })
+    // GPU 计时只在设备支持 EXT_disjoint_timer_query_webgl2 时开启（capabilities 已探测）
+    this.pipeline = new Pipeline({ hdr: this.hdrSupported, gpuTiming: capabilitiesStore.timerQuery })
     this.pipeline.addPass(this.beauty)
     this.pipeline.addPass(this.luminancePass)
     this.pipeline.addPass(this.bloomPass)

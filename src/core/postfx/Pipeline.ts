@@ -20,6 +20,12 @@ export interface PipelineOptions {
    * 刻意不在 Pipeline 内读 store：渲染核心保持与状态层无关。
    */
   hdr: boolean
+  /**
+   * 是否启用 GPU 逐 pass 计时（EXT_disjoint_timer_query_webgl2）。
+   * 由调用方依据 capabilities.timerQuery 判定；为 false 时不申请扩展、不填 lastGpuMs，
+   * 面板端对应展示「GPU 计时不可用」。
+   */
+  gpuTiming?: boolean
 }
 
 /**
@@ -55,9 +61,19 @@ export class Pipeline {
   private frame = 0
   private inputDepth: THREE.DepthTexture | null = null
 
+  /** 是否启用 GPU 逐 pass 计时（来自调用方 capabilities.timerQuery） */
+  private readonly gpuTiming: boolean
+  /** EXT_disjoint_timer_query_webgl2（懒加载并缓存，可能为 null；类型用 any：各 TS lib 对该扩展的全局声明名不一致） */
+  private timerExt: any = null
+  /** 持有扩展时的 GL 上下文（用于 deleteQuery 清理） */
+  private timerGl: WebGL2RenderingContext | null = null
+  /** 每个 pass 一个计时 query（按 name 索引）；pending=true 表示该 query 已 end、结果待下帧读取 */
+  private readonly passTimers = new Map<string, { query: WebGLQuery | null; pending: boolean }>()
+
   constructor(options: PipelineOptions) {
     this.hdrActive = options.hdr
     this.hdrFormat = options.hdr ? 'RGBA16F' : 'RGBA8'
+    this.gpuTiming = options.gpuTiming ?? false
   }
 
   get stats(): PipelineStats {
@@ -73,7 +89,20 @@ export class Pipeline {
     const index = this.passes.findIndex((pass) => pass.name === name)
     if (index < 0) return
     const [removed] = this.passes.splice(index, 1)
+    const t = this.passTimers.get(name)
+    if (t?.query && this.timerGl) this.timerGl.deleteQuery(t.query)
+    this.passTimers.delete(name)
     removed?.dispose()
+  }
+
+  /** 取（或建）某 pass 的计时状态；计时与 Pass 接口解耦，不污染各 pass 实现 */
+  private ensureTimer(name: string): { query: WebGLQuery | null; pending: boolean } {
+    let t = this.passTimers.get(name)
+    if (!t) {
+      t = { query: null, pending: false }
+      this.passTimers.set(name, t)
+    }
+    return t
   }
 
   getPass<T extends Pass = Pass>(name: string): T | undefined {
@@ -114,6 +143,20 @@ export class Pipeline {
     this.releaseAll()
     this.inputDepth = null
 
+    // GPU 计时扩展：每帧首次需要时申请一次并缓存；disjoint 每帧只读一次
+    // （读取 GPU_DISJOINT_EXT 会清除该标志，故必须每帧只取一次）
+    const gl = renderer.getContext() as WebGL2RenderingContext
+    let ext: any = null
+    let disjoint = false
+    if (this.gpuTiming) {
+      if (!this.timerExt) {
+        this.timerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2')
+        this.timerGl = this.timerExt ? gl : null
+      }
+      ext = this.timerExt
+      if (ext) disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT) as boolean
+    }
+
     const frameStart = performance.now()
     const stats: PassTiming[] = []
 
@@ -139,6 +182,32 @@ export class Pipeline {
         exposureEV: this.exposureEV,
       }
 
+      // 上一帧遗留的计时 query：结果就绪且未 disjoint 则写入 lastGpuMs；
+      // 否则丢弃本帧发起（pending 保留，待下帧再读），避免覆盖未读结果。
+      let activeQuery: WebGLQuery | null = null
+      if (ext) {
+        const t = this.ensureTimer(pass.name)
+        if (t.pending && t.query) {
+          if (disjoint) {
+            t.pending = false
+          } else {
+            const available = gl.getQueryParameter(t.query, gl.QUERY_RESULT_AVAILABLE) as boolean
+            if (available) {
+              const ns = gl.getQueryParameter(t.query, gl.QUERY_RESULT) as number
+              pass.lastGpuMs = ns / 1e6
+              t.pending = false
+            }
+          }
+        }
+        if (!t.pending) {
+          if (!t.query) t.query = gl.createQuery()
+          if (t.query) {
+            gl.beginQuery(ext.TIME_ELAPSED_EXT, t.query)
+            activeQuery = t.query
+          }
+        }
+      }
+
       const passStart = performance.now()
       let output: THREE.Texture | null = null
 
@@ -148,6 +217,12 @@ export class Pipeline {
         output = target ? target.texture : null
       } else if (pass.render) {
         output = pass.render(ctx, target)
+      }
+
+      if (ext && activeQuery) {
+        gl.endQuery(ext.TIME_ELAPSED_EXT)
+        const t = this.passTimers.get(pass.name)
+        if (t) t.pending = true
       }
 
       stats.push({ name: pass.name, cpuMs: performance.now() - passStart, gpuMs: pass.lastGpuMs ?? null })
@@ -176,6 +251,14 @@ export class Pipeline {
     this.releaseAll(true)
     this.passes.forEach((pass) => pass.dispose())
     this.passes.length = 0
+    if (this.timerGl) {
+      this.passTimers.forEach((t) => {
+        if (t.query) this.timerGl!.deleteQuery(t.query)
+      })
+    }
+    this.passTimers.clear()
+    this.timerExt = null
+    this.timerGl = null
   }
 
   /**

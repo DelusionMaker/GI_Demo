@@ -45,14 +45,21 @@ export const PerfPanel = observer(function PerfPanel() {
           {passTimes.map((pass) => (
             <div className="perf-pass-row" key={pass.name}>
               <span className="perf-key">{pass.name}</span>
-              <span className="perf-val-sm">{pass.cpuMs.toFixed(2)} ms</span>
+              <span className="perf-val-sm">
+                {pass.cpuMs.toFixed(2)} ms CPU
+                {pass.gpuMs !== null && ` · ${pass.gpuMs.toFixed(2)} ms GPU`}
+              </span>
             </div>
           ))}
           <div className="perf-pass-row perf-pass-total">
             <span className="perf-key">链路合计</span>
             <span className="perf-val-sm">{hdrStore.totalMs.toFixed(2)} ms</span>
           </div>
-          <div className="perf-pass-note">CPU 侧计时 · GPU 时间待接（p0-gbuffer-hud）</div>
+          {passTimes.some((p) => p.gpuMs !== null) ? (
+            <div className="perf-pass-note">CPU 侧提交耗时 · GPU 时间为实测（EXT_disjoint_timer_query_webgl2）</div>
+          ) : (
+            <div className="perf-pass-note">CPU 侧提交耗时 · GPU 计时不可用（设备不支持 EXT_disjoint_timer_query_webgl2）</div>
+          )}
         </div>
       ) : null}
 

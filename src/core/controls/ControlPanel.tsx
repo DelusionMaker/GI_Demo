@@ -49,6 +49,7 @@ export interface SliderProps {
   step?: number
   digits?: number
   unit?: string
+  hint?: string
   onChange: (value: number) => void
 }
 
@@ -60,6 +61,7 @@ export function Slider({
   step = 0.01,
   digits = 2,
   unit = '',
+  hint = '',
   onChange,
 }: SliderProps) {
   return (
@@ -77,6 +79,7 @@ export function Slider({
         {value.toFixed(digits)}
         {unit}
       </span>
+      {hint ? <span className="ctl-hint">{hint}</span> : null}
     </label>
   )
 }
