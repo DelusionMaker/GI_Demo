@@ -367,7 +367,7 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 | 步骤 | 内容 | 验收点 | 状态 |
 | --- | --- | --- | --- |
 | **S1** | MRT 基础设施：BeautyPass.target 改为 MRT（3 附件）；Pipeline 创建多渲染目标、把 `gAlbedo` 作下游输入、暂存 G-buffer 供调试 / 后续读取 | G-buffer 渲染无 WebGL error；下游以 gAlbedo 为输入，观感与单通道一致（回归） | ✅ 脚手架完成（2026-10-13） |
-| **S2** | **你自写核心**：`GBufferMaterial`（GLSL3，多 `out` 输出 albedo/normal/mrao）、把 hello-cube 的 meshStandardMaterial 换成它、处理法线编码与精度 | 各附件内容合理（albedo≈原色、normal 表面有渐变、mrao 分通道可见） | ⬜ 待你实现 |
+| **S2** | **你自写核心**：`GBufferMaterial`（GLSL3，多 `out` 输出 albedo/normal/mrao）、把 hello-cube 的 meshStandardMaterial 换成它、处理法线编码与精度 | 各附件内容合理（albedo≈原色、normal 表面有渐变、mrao 分通道可见） | ✅ 脚手架完成（材质/接线/占位着色器已就位），**着色主体 `TODO(S2 · 你来写)` 待你实现** |
 | **S3** | 调试可视化 + 接线：`hdrDebug` 增加 gAlbedo/gNormal/gMRAO，HUD 下拉接上并采样对应附件呈现；smoke 加 G-buffer 渲染断言 | 调试视图可切三层且内容合理；`npm run typecheck` / `smoke` 通过 | ⬜ 待做（脚手架可代劳接线，调试 shader 你写） |
 
 ### 4.3 验收清单

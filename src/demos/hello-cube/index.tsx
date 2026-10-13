@@ -1,7 +1,8 @@
 import { useFrame } from '@react-three/fiber'
 import { observer } from 'mobx-react-lite'
-import { useRef } from 'react'
+import { useMemo, useRef } from 'react'
 import * as THREE from 'three'
+import { createGBufferMaterial } from '@/core/postfx/materials/GBufferMaterial'
 import { CAMERA_HELP, CameraRig, type CameraPreset } from '@/core/camera/CameraRig'
 import { Panel, Select, Slider, Toggle, type SelectOption } from '@/core/controls/ControlPanel'
 import { createDemoStore } from '@/core/controls/demoStore'
@@ -54,10 +55,15 @@ const DEFAULTS: DemoParams = {
 /** 参数状态：MobX store，与 URL query 双向同步，链接可直接分享复现 */
 const store = createDemoStore(DEFAULTS)
 
-/** 着色探针物体：后续把材质换成自写 BRDF，调试视图切它的中间量 */
+/** 着色探针物体：S2 起用自写 G-buffer 材质填充 MRT，调试视图切它的中间量 */
 const ShadingProbe = observer(function ShadingProbe() {
   const { speed, roughness, metalness, debug } = store.params
   const ref = useRef<THREE.Mesh>(null)
+
+  // G-buffer 材质只建一次；roughness / metalness 改动时同步到 uniform。
+  const gbufferMaterial = useMemo(() => createGBufferMaterial({ color: '#cbd5e4' }), [])
+  gbufferMaterial.uniforms.uRoughness.value = roughness
+  gbufferMaterial.uniforms.uMetalness.value = metalness
 
   useFrame((_, delta) => {
     if (ref.current) ref.current.rotation.y += delta * speed
@@ -71,7 +77,7 @@ const ShadingProbe = observer(function ShadingProbe() {
       ) : debug === 'normals' ? (
         <meshNormalMaterial />
       ) : (
-        <meshStandardMaterial color="#cbd5e4" roughness={roughness} metalness={metalness} />
+        <primitive object={gbufferMaterial} attach="material" />
       )}
     </mesh>
   )
@@ -159,7 +165,7 @@ const Stage = observer(function Stage() {
         topLeft={
           <HudTitle
             title="hello-cube"
-            subtitle="自建 pass 冒烟测试：场景 → HDR 目标 → 呈现（S1 直通）"
+            subtitle="自建 pass 冒烟测试：场景 → G-buffer MRT → HDR 目标 → 呈现（S1–S2）"
           />
         }
         topRight={<PerfPanel />}
