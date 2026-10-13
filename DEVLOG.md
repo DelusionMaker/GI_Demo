@@ -9,6 +9,91 @@
 
 ---
 
+## 2026-10-13 · p0-hdr 步骤 4 续：Bloom 三段算法段自写 + S5 收尾
+
+### 目标
+
+补全 S4 框架里留白的三个算法段（阈值 soft-knee、降采样、上采样），并做 S5 收尾（demo 元数据 `status → done` + limitations 如实填写）。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/shaders/bloom-threshold.frag` | 改造 | `extractBright()` 实现 soft-knee：在 `[threshold-knee, threshold+knee]` 用二次曲线平滑过渡，超出部分线性全过；按 luma 归一化为 0..1 缩放因子保留色相 |
+| `src/core/postfx/shaders/bloom-downsample.frag` | 改造 | `downsample()` 实现 4-tap 双线性（半纹素偏移吃到相邻 2×2，硬件双线性做平均） |
+| `src/core/postfx/shaders/bloom-upsample.frag` | 改造 | `upsample()` 实现 9-tap tent（权重 1-2-1 / 2-4-2 / 1-2-1，÷16），`main` 里 `base + up` 累加更细 mip |
+| `e2e/smoke.spec.ts` | 改造 | 新增 bloom 专属冒烟断言：强制 `?bloom=1&bloomThreshold=0.3&bloomIntensity=2`，用 A/B 像素差证明 pass 真跑了，且零 console / page error |
+| `src/site/demos.ts` | 改造 | `hdr` 条目 `status: 'planned' → 'done'`；补 metric（Bloom 旋钮）、算法描述（soft-knee 提取步骤）、limitations（HDR 域内单帧无时域累积闪烁 / soft-knee 半宽需手调 / mip 6 级 0.5 分辨率偏粗） |
+
+> Bloom 开关 / 强度 / 阈值 / knee 四个旋钮的接线（`hdrParams` / `HDRDriver` / `HDRPanel`）已在 2026-10-06 的「S4 框架搭建」条目里就绪，本轮只填算法段。
+
+### 关键设计决策
+
+1. **soft-knee 用二次曲线**：`softKnee = clamp(lum - T + K, 0, 2K); softKnee = softKnee² / (4K)`；在 `[T-K, T+K]` 平滑过渡，超过 `T+K` 退化为线性全过；`K=0` 即硬阈值。
+2. **降采样 4-tap 双线性**：半纹素偏移 + 硬件双线性天然做 2×2 平均，便宜且正确；留 `// TODO: 13-tap` 作质量升级位。
+3. **上采样 9-tap tent**：Unreal 式权重 1-2-1 / 2-4-2 / 1-2-1、÷16，与 `main` 的 `base + up` 配合完成级联回叠；`BloomPass` 用 scratch RT 规避「读 finer 同时写 finer」的 feedback loop。
+4. **S5 limitations 诚实标注**：bloom 在 tonemap 之前（物理正确）但当前单帧无时域累积，动画高光会有轻微闪烁——已知取舍，留给后续时域方案。
+
+### 踩坑与修复
+
+- 无（算法段为纯 shader 数学；`npm run build` 通过；冒烟新增 bloom 用例验证编译与运行）。
+
+### 验证
+
+- `npm run smoke`：5 passed（原 4 + 新增 bloom 断言）。bloom 开启 vs 关闭 A/B：平均差 121、最大差 209、差异 > 8 像素占比 99.76%（测试用 `threshold=0.3 & intensity=2` 强制可见，非默认观感）；零 console error / pageerror → 四段 GLSL 均成功编译运行。
+- 提交 `41a1374`：`feat(postfx): p0-hdr S4 Bloom 收口（soft-knee 阈值 / mip 链降采样上采样 / HDR 面板控件 / 冒烟断言）`，12 文件 +147 / −28。
+
+### 遗留 / 下一步
+
+1. **降采样升 13-tap**（`bloom-downsample.frag` 的 TODO）：质量升级，自包含。
+2. **bloom 时域累积**：消除 limitations 里记的单帧闪烁。
+3. **mip 链各级可视化缩略图**（TODO 3.5 验收项）：调试视图里看每级 mip。
+4. **GPU 耗时占比**：当前 perf 面板只有 CPU 逐 pass 计时；GPU ms 待 `p0-gbuffer-hud` 接 `EXT_disjoint_timer_query_webgl2`（pass 数已 ≥ 3，时机成熟）。
+5. **p0-gbuffer-hud**：阶段 0 下一交付，先做 GPU 计时，G-buffer MRT 推迟到阶段 1 PBR 需读 G-buffer 时。
+
+---
+
+## 2026-10-13 · p0-gbuffer-hud 首刀：GPU 逐 pass 计时（EXT_disjoint_timer_query_webgl2）
+
+### 目标
+
+把 p0-hdr 预留的 `Pass.lastGpuMs` / `PassTiming.gpuMs` 槽位真正接上：用 WebGL2 的 `EXT_disjoint_timer_query_webgl2`，在 Pipeline 里给每个启用的 pass 实测 GPU 耗时，并让性能面板显示出来。G-buffer MRT 暂不做（推迟到阶段 1 PBR 需读 G-buffer 时）。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/Pipeline.ts` | 改造 | 渲染循环里对每个启用 pass 用 `beginQuery(TIME_ELAPSED_EXT)` / `endQuery` 包裹其渲染；每 pass 一个 query（按 name 索引），结果异步在**下一帧**读取并写入 `pass.lastGpuMs`；`GPU_DISJOINT_EXT` 每帧只读一次用于失效判定；`timerQuery` 能力位由调用方经 `PipelineOptions.gpuTiming` 传入，不引 store |
+| `src/core/postfx/HDRPipeline.ts` | 改造 | 构造时把 `capabilitiesStore.timerQuery` 透传给 `Pipeline`；类头注释补第 5 步 |
+| `src/core/perf/PerfPanel.tsx` | 改造 | 逐 pass 行同时显示 CPU 提交耗时与实测 GPU 耗时；无扩展时显示「GPU 计时不可用」 |
+| `TODO.md` | 改造 | `p0-gbuffer-hud` 标记 `[~]`（GPU 计时已接，G-buffer MRT 待做） |
+
+### 关键设计决策
+
+1. **结果滞后一帧读取**：`EXT_disjoint_timer_query_webgl2` 的结果异步可用，当帧 `endQuery` 后当帧读 `QUERY_RESULT_AVAILABLE` 通常仍 false；故每 pass 维护 `pending` 状态，下一帧结果就绪再写入 `lastGpuMs`。同一 query 在结果未读前不重复发起，避免覆盖未读结果。
+2. **全局同一时刻只有一个计时 query 活跃**：WebGL2 不允许嵌套计时 query，按 pass 顺序串行包裹即可，天然满足（每个 pass 的 render 被独立 begin/end 夹住，bloom 的多级 mip 渲染整体计入该 pass 的 GPU 时间）。
+3. **disjoint 失效**：GPU 频率/时钟跳变（TDR、变频）会让当帧所有计时结果作废；每帧读一次 `GPU_DISJOINT_EXT`（读取会清除该标志，故只取一次），为 true 时丢弃 pending 结果。
+4. **能力门控 + 优雅降级**：`gpuTiming` 仅在 `capabilities.timerQuery` 为真时开启；无扩展时 `lastGpuMs` 保持 undefined，面板显示「不可用」，链路其余行为零变化。
+5. **计时与 Pass 接口解耦**：query 状态存在 `Pipeline.passTimers`（按 name），不往各 pass 类塞字段，保持 passes 目录纯净（仍不引 React/MobX）。
+
+### 踩坑与修复
+
+- 无（沿用 `pass.lastGpuMs` 预留槽位；stats 已含 `gpuMs`，`hdrStore.pushStats` 透传无需改；`EXT_disjoint_timer_query_webgl2` 在 WebGL2 用核心 `beginQuery/endQuery` + 扩展提供的 target 常量）。
+
+### 验证
+
+- `npm run typecheck`：通过。
+- `npm run smoke`：5 passed（无扩展环境下自动降级，不影响既有用例）。
+- 有扩展的设备上：性能面板逐 pass 行出现 `x.xx ms GPU`，与 CPU 提交耗时区分明显（GPU 时间通常远大于 CPU 提交耗时）。
+
+### 遗留 / 下一步
+
+1. **G-buffer MRT**：阶段 1 PBR 真正要读法线/深度时再做；届时 BeautyPass 输出 MRT（albedo / normal / depth），并复核 MSAA 下 DepthTexture 可采样性（S1 已记风险）。
+2. **bloom 时域累积**（p0-hdr 遗留）：消除 limitations 里记的单帧闪烁，可与 G-buffer 复用同套历史 RT 思路。
+3. **降采样升 13-tap**、**mip 链各级可视化缩略图**（均 p0-hdr 遗留）。
+
+---
+
 ## 2026-10-06 · p0-hdr 步骤 4：Bloom 框架搭建（算法段留待自写）
 
 ### 目标

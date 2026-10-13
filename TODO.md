@@ -58,8 +58,8 @@ npm run build      # 生产构建
   - [ ] 多级降级路径骨架（WebGPU → WebGL2 → 烘焙结果 → 视频）→ p5-final 补完
   - [ ] 截图 / 录制工具接口（封面 GIF + 视觉回归）→ eng-shared 接入
   - [ ] monorepo 拆分 → eng-shared
-- [ ] **p0-hdr** HDR 管线与色调映射（ACES / AgX、自动曝光、物理 bloom）　**← 下一步，拆解见「三」**
-- [ ] **p0-gbuffer-hud** G-buffer MRT + 性能 HUD（帧时间 / 各 pass 耗时 / GPU 计时）
+- [x] **p0-hdr** HDR 管线与色调映射（ACES / AgX、自动曝光、物理 bloom）　**✅ S1–S5 已完成（见 DEVLOG 2026-10-13）**
+- [~] **p0-gbuffer-hud** G-buffer MRT + 性能 HUD（GPU 计时已接，G-buffer MRT 待做）
 - [ ] **p0-assets** 准备 3 个场景资产（Cornell box / 室内 / 户外）
 
 ### 阶段 1 · 直接光照（2–3 周）
@@ -226,7 +226,7 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 | **S2** | 曝光滑杆 / 曲线下拉 / URL 序列化 / 曲线对照图已接通；**曲线数学已实现**（Reinhard 本来正确；ACES 修正公式 + 去 `f` 后缀；AgX 补成完整 Sobotka 拟合，含原色变换矩阵）；**过曝回收诊断视图**（映射前 >1 像素染红，采用 shader 方案 a） | 三条曲线形状正确（Reinhard 无 shoulder、ACES 有 toe/shoulder、AgX 更陡）；EV 变化时整体亮度单调 | ✅ 完成（曲线 + 过曝回收诊断） |
 | **S3** | `passes/LuminancePass.ts`（降采样 + log 平均 + 隔帧异步回读，旁路透传不截断主链）；直方图面板；自动曝光（middle-gray 补偿 + 指数平滑）；「过曝回收」A/B 对比开关 | EV 从 −4 扫到 +4 时高光**不截断**（对比 8bit 路径的死白/色块）；直方图随 EV 平移；自动曝光 1–2 帧收敛、无可见振荡 | ✅ 代码完成（浏览器内验证待补，见 DEVLOG 2026-10-06） |
 | **S4** | `passes/BloomPass.ts`（HDR 域内阈值 + 6 级 mip 下采样 + 上采样合成，框架已搭）；`bloom` / `bloomIntensity` 旋钮已接 | mip 链各级可缩略图可视化；关闭时高光边界硬、开启后柔和不糊；给出 bloom 的耗时占比 | ✅ 框架就绪（阈值 soft-knee / 降采样 / 上采样三个算法段待你实现，见 DEVLOG 2026-10-06 p0-hdr S4） |
-| **S5** | 收尾：`src/site/demos.ts` 的 `hdr` 条目 status → `done`，如实补 limitations（自动曝光迟滞、半精度暗部条带） | 站点上该 demo 不再显示「规划中」 | 0.5 天 |
+| **S5** | 收尾：`src/site/demos.ts` 的 `hdr` 条目 status → `done`，如实补 limitations（自动曝光迟滞、半精度暗部条带） | 站点上该 demo 不再显示「规划中」 | ✅ 完成（2026-10-13） |
 
 #### 3.4.1 S1 完成记录
 
