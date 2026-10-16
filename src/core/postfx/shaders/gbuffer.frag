@@ -88,8 +88,15 @@ void main() {
   float G = geometrySmith(NoV, NoL, uRoughness); // 几何遮蔽 Smith 随着角度变掠射，逐渐降低微表面的贡献率，模拟真实世界中粗糙表面边缘变暗、高光收敛的物理现象
   vec3  F = fresnelSchlick(VoH, F0); // Fresnel 视线与表面法线夹角越大（越接近掠射角），表面的反射能力就越强‌
 
+  vec3 specular = (D * G * F) / (4.0 * NoV * NoL + 1e-4);
+  vec3 kD = (vec3(1.0) - F) * (1.0 - uMetalness);   // 金属无漫反射
+  vec3 diffuse  = kD * albedo / PI;
 
+  vec3 lightColor = vec3(3.0);                       // 占位主光强度（调参见下）
+  vec3 direct = (diffuse + specular) * lightColor * NoL;
 
+  vec3 ambient = albedo * 0.03;                      // 占位环境项（真实应来自 IBL）
 
-  gAlbedo = vec4(vec3(albedo), 1.0);
+  gAlbedo = vec4(ambient + direct, 1.0);
+  // gAlbedo = vec4(vec3(albedo), 1.0);
 }
