@@ -28,9 +28,16 @@ export class BeautyPass implements Pass {
     samples: 0,
     /** 深度纹理在 RT 创建时即挂好，避免 p0-gbuffer-hud / SSR / SSGI 回头改 RT */
     depthTexture: true,
-    /** G-buffer MRT：albedo（供下游当 beauty）/ normal / MRAO。S2 由 GBufferMaterial 填充 */
+    /**
+     * G-buffer MRT：albedo（供下游当 beauty）/ normal / MRAO。S2 由 GBufferMaterial 填充。
+     *
+     * gAlbedo 用 RGBA16F 而非 S1 规划的 RGBA8：S2 已定「前向着色」——gAlbedo 存的是
+     * Cook-Torrance 的**最终颜色**（含 >1 的高光），RGBA8 会在写入时截断到 1，
+     * 下游 tonemap / bloom 阈值 / EV 就失去 HDR 前提（MRT 真正启用后才会暴露）。
+     * gMRAO 仍是数据通道，RGBA8 足够。
+     */
     mrt: [
-      { name: 'gAlbedo' as const, format: 'RGBA8' as const, filter: 'linear' as const },
+      { name: 'gAlbedo' as const, format: 'RGBA16F' as const, filter: 'linear' as const },
       { name: 'gNormal' as const, format: 'RGBA16F' as const, filter: 'linear' as const },
       { name: 'gMRAO' as const, format: 'RGBA8' as const, filter: 'linear' as const },
     ],

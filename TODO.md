@@ -59,7 +59,7 @@ npm run build      # 生产构建
   - [ ] 截图 / 录制工具接口（封面 GIF + 视觉回归）→ eng-shared 接入
   - [ ] monorepo 拆分 → eng-shared
 - [x] **p0-hdr** HDR 管线与色调映射（ACES / AgX、自动曝光、物理 bloom）　**✅ S1–S5 已完成（见 DEVLOG 2026-10-13）**
-- [~] **p0-gbuffer-hud** G-buffer MRT + 性能 HUD（GPU 计时已接；G-buffer MRT 的 S1 脚手架完成，S2 材质待你自写）
+- [~] **p0-gbuffer-hud** G-buffer MRT + 性能 HUD（GPU 计时已接；S1/S2 完成——BRDF 自写 + 全场景 `GBufferMaterial`，MRT 探测已修复并真正启用；S3 调试视图待做）
 - [ ] **p0-assets** 准备 3 个场景资产（Cornell box / 室内 / 户外）
 
 ### 阶段 1 · 直接光照（2–3 周）
@@ -355,19 +355,19 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 
 | 附件 | 格式 | 内容 |
 | --- | --- | --- |
-| `gAlbedo` | RGBA8 | 反照率（颜色，下游当 beauty） |
+| `gAlbedo` | RGBA16F | 反照率 / 前向最终着色（下游当 beauty） |
 | `gNormal` | RGBA16F | 世界/视图法线（需精度，防 banding） |
 | `gMRAO` | RGBA8 | metallic / roughness / ao / emissive |
 | depth | DepthTexture | 深度（SSR / SSGI 复用） |
 
-> 精度取舍（RGBA8 vs RGBA16F）是真实工程决策，面试能讲；当前脚手架先按上表落，S2 由你写 `GBufferMaterial` 时定稿。
+> 精度取舍（RGBA8 vs RGBA16F）是真实工程决策，面试能讲：S2 定稿走前向着色后 `gAlbedo` 存的是最终颜色（含 >1 高光），必须 RGBA16F，否则 tonemap / bloom / EV 的 HDR 前提失效（2026-10-18 修正，见 DEVLOG）。
 
 ### 4.2 落地步骤（含每步验收点）
 
 | 步骤 | 内容 | 验收点 | 状态 |
 | --- | --- | --- | --- |
 | **S1** | MRT 基础设施：BeautyPass.target 改为 MRT（3 附件）；Pipeline 创建多渲染目标、把 `gAlbedo` 作下游输入、暂存 G-buffer 供调试 / 后续读取 | G-buffer 渲染无 WebGL error；下游以 gAlbedo 为输入，观感与单通道一致（回归） | ✅ 脚手架完成（2026-10-13） |
-| **S2** | **你自写核心**：`GBufferMaterial`（GLSL3，多 `out` 输出 albedo/normal/mrao）、把 hello-cube 的 meshStandardMaterial 换成它、处理法线编码与精度 | 各附件内容合理（albedo≈原色、normal 表面有渐变、mrao 分通道可见） | ✅ 脚手架完成（材质/接线/占位着色器已就位），**着色主体 `TODO(S2 · 你来写)` 待你实现** |
+| **S2** | **你自写核心**：`GBufferMaterial`（GLSL3，多 `out` 输出 albedo/normal/mrao）、把 hello-cube 的 meshStandardMaterial 换成它、处理法线编码与精度 | 各附件内容合理（albedo≈原色、normal 表面有渐变、mrao 分通道可见） | ✅ 主体完成：前向 Cook-Torrance（GGX/Smith/Schlick）已自写；场景与探针全部换 `GBufferMaterial`，MRT 探测修复后真正启用（2026-10-18）。剩余占位：硬编码主光/环境项、法线空间定稿、emissive |
 | **S3** | 调试可视化 + 接线：`hdrDebug` 增加 gAlbedo/gNormal/gMRAO，HUD 下拉接上并采样对应附件呈现；smoke 加 G-buffer 渲染断言 | 调试视图可切三层且内容合理；`npm run typecheck` / `smoke` 通过 | ⬜ 待做（脚手架可代劳接线，调试 shader 你写） |
 
 ### 4.3 验收清单
@@ -381,6 +381,7 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 ### 4.4 风险与注意事项
 
 - **MSAA × MRT × DepthTexture 解析**（已知风险）：脚手架阶段 `samples:0` 保证可用，MSAA 恢复或改 TAA 留作 S3 决策。
+- **MRT 下所有材质必须写满 fragment output**（2026-10-18 踩坑）：three 会把全部附件设为 draw buffer，three 内建材质只写 1 个 out，会触发 `GL_INVALID_OPERATION: Active draw buffers with missing fragment shader outputs` 且 draw 被丢弃。新增场景/调试材质时必须用 `GBufferMaterial` 变体（或自写多 out shader）。
 - **normal 编码空间与精度**：world / view 选择 + RGBA16F 防 banding。
 - **MRT 附件可渲染性**：`RGBA16F` 需 `EXT_color_buffer_float`（已探测 `colorBufferFloat` ✓）。
 - **下游消费**：Pipeline 统一用 `target.textures[0]` 作为本环输出，MRT 下即 gAlbedo，单目标下即原 texture，无需改动各下游 pass。

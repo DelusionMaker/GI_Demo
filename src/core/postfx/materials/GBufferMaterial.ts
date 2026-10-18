@@ -7,6 +7,14 @@ export interface GBufferMaterialOptions {
   color?: THREE.ColorRepresentation
   roughness?: number
   metalness?: number
+  /**
+   * 调试视图：gAlbedo 直接输出编码法线（demo 的「法线」档位）。
+   * 注意：MRT 帧缓冲有 3 个活动 draw buffer，**所有**渲进 beauty 的材质都必须
+   * 写满 3 个 fragment output——three 内建材质（meshStandardMaterial 等）只写 1 个，
+   * 在 MRT 下会触发 GL_INVALID_OPERATION 且该 draw 被丢弃，因此场景物体
+   * （含调试视图）都必须用本材质，靠 uniform 切变体，不能换内建材质。
+   */
+  debugNormals?: boolean
 }
 
 /**
@@ -24,6 +32,7 @@ export function createGBufferMaterial(options: GBufferMaterialOptions = {}): THR
       uBaseColor: { value: new THREE.Color(options.color ?? '#cbd5e4') },
       uRoughness: { value: options.roughness ?? 0.35 },
       uMetalness: { value: options.metalness ?? 0.1 },
+      uDebugNormals: { value: options.debugNormals ? 1 : 0 },
     },
     vertexShader: gbufferVert,
     fragmentShader: gbufferFrag,

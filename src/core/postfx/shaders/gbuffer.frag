@@ -16,6 +16,7 @@ uniform vec3 uBaseColor;
 uniform float uRoughness;
 uniform float uMetalness;
 uniform vec3 cameraPosition;
+uniform int uDebugNormals; // 调试视图：1 = gAlbedo 输出编码法线（见下方 main 内分支）
 
 in vec3 vWorldNormal;
 in vec3 vWorldPos;
@@ -62,6 +63,16 @@ void main() {
   // TODO(S2 · 你来写)：从这些 uniform 或贴图取金属度、粗糙度、AO、emissive。
   // 暂时用 uniform
   gMRAO = vec4(uMetalness, uRoughness, 1.0, 0.0);
+
+  // ── 调试：法线视图（demo 的「法线（中间量）」档位）──
+  // MRT 下帧缓冲有 3 个活动 draw buffer，任何材质都必须写满 3 个 out，
+  // 因此调试视图也不能换回 three 内建材质（只写 1 个 out 会直接
+  // GL_INVALID_OPERATION 且该 draw 被丢弃）。这里让 gAlbedo 输出编码法线，
+  // 经下游 HDR 链呈现即得法线图。gNormal/gMRAO 上面已写满，可提前返回。
+  if (uDebugNormals == 1) {
+    gAlbedo = vec4(N * 0.5 + 0.5, 1.0);
+    return;
+  }
 
   // ── gAlbedo：脚手架用最小 Lambert，让画面不像纯平 albedo（占位光照）。
   //    真实实现应替换为你的 BRDF（直接光 + IBL），并把结果写到这里。

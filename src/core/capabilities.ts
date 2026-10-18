@@ -85,10 +85,32 @@ export class CapabilitiesStore {
       if (second && test.textures[0]) {
         test.textures[1].type = THREE.HalfFloatType
 
-        // 纯红全屏四边形渲染进 MRT 的第 0 附件
+        // 全屏四边形：用 GLSL3 RawShaderMaterial 写满 2 个 fragment output。
+        // 关键：three 绑定 MRT 时会把**全部附件**设为 draw buffer（WebGLState.drawBuffers）；
+        // 若材质只写 1 个 out（three 内建材质即如此），Chrome/ANGLE 会报
+        // 「Active draw buffers with missing fragment shader outputs」→ GL_INVALID_OPERATION，
+        // 且整次 draw 被丢弃 → 回读永远全黑 → MRT 能力被误判为不可用（探测自我否决）。
         const probeScene = new THREE.Scene()
         const probeCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
-        const probeMat = new THREE.MeshBasicMaterial({ color: 0xff0000 })
+        const probeMat = new THREE.RawShaderMaterial({
+          glslVersion: THREE.GLSL3,
+          vertexShader: `
+precision highp float;
+in vec3 position;
+void main() {
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`,
+          fragmentShader: `
+precision highp float;
+layout(location = 0) out vec4 outColor0;
+layout(location = 1) out vec4 outColor1;
+void main() {
+  outColor0 = vec4(1.0, 0.0, 0.0, 1.0);
+  outColor1 = vec4(0.0, 0.0, 1.0, 1.0);
+}
+`,
+        })
         const probeMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), probeMat)
         probeScene.add(probeMesh)
 
@@ -114,6 +136,13 @@ export class CapabilitiesStore {
       mrtSupported = false
     }
     this.mrt = mrtSupported
+    // 本机验证入口（S1 遗留 #3）：dev 下明确告知 MRT 是否真正启用，
+    // 避免「画面正常但其实一直走单目标降级」的静默状态
+    if (import.meta.env.DEV) {
+      console.info(
+        `[capabilities] MRT ${mrtSupported ? '可用（G-buffer 走 MRT）' : '不可用（G-buffer 降级为单目标）'}`,
+      )
+    }
 
     this.maxAnisotropy = renderer.capabilities.getMaxAnisotropy()
   }

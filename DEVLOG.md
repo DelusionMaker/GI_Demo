@@ -9,6 +9,95 @@
 
 ---
 
+## 2026-10-18 · 修复 GL_INVALID_OPERATION（MRT draw buffer 缺 fragment output）+ MRT 探测自我否决
+
+### 目标
+
+消除真实 GPU console 里的 `GL_INVALID_OPERATION: glDrawElements: Active draw buffers with missing fragment shader outputs`，并顺带查清「MRT 路径是否真的启用过」。
+
+### 根因（两处，互相掩盖）
+
+three 绑定 MRT 时会把**全部附件**设为 draw buffer（`WebGLState.drawBuffers`，three.module.js:23249-23300 实测确认）。Chrome/ANGLE 的校验要求 shader 的 fragment output 数量 ≥ 活动 draw buffer 数量，不满足即报本错误，**且整次 draw 被丢弃**。
+
+1. **能力探测自我否决（错误持续出现的直接来源）**：`capabilities.ts` 用 `count: 2` 的 MRT + `MeshBasicMaterial`（只写 1 个 out）做「渲染+回读」探测。每次页面加载都会触发该错误；draw 被丢弃 → 回读永远全黑 → `mrt` 恒为 false。**即 2026-10-13 S1 记录的「真实 GPU 上回读为红 → MRT 生效」从未成立过，MRT 在所有设备上一直静默降级为单目标。**
+2. **场景材质只写 1 个 out**：`SceneAsset` 占位场景 4 个 `meshStandardMaterial`、探针线框/法线视图的 `meshBasicMaterial`/`meshNormalMaterial`。此前因 `mrt=false` 未暴露；探测修复后若不同步修复，整帧场景的 draw 都会被丢弃（画面只剩探针）。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/capabilities.ts` | 改造 | MRT 探测材质换成 GLSL3 `RawShaderMaterial`，写满 2 个 `layout(location=…) out`（红/蓝）；新增 dev-only 日志告知 MRT 是否真正启用 |
+| `src/core/scene/SceneAsset.tsx` | 改造 | 占位场景 4 个 `meshStandardMaterial` → `GBufferMaterial`（参数一一对应）；GLTF 路径补「资产材质需替换」TODO |
+| `src/demos/hello-cube/index.tsx` | 改造 | 探针调试视图不再换内建材质：线框 = `GBufferMaterial.wireframe`，法线 = `uDebugNormals` 变体 |
+| `src/core/postfx/shaders/gbuffer.frag` | 改造 | 新增 `uDebugNormals` 分支（gAlbedo 输出编码法线，gNormal/gMRAO 照常写满后提前返回）；BRDF 主体未动 |
+| `src/core/postfx/materials/GBufferMaterial.ts` | 改造 | 新增 `debugNormals` 选项；文档固化「MRT 下所有材质必须写满 3 个 out」 |
+| `src/core/postfx/passes/BeautyPass.ts` | 改造 | `gAlbedo` RGBA8 → RGBA16F（S2 定为前向着色，存的是最终颜色，RGBA8 会截断 >1 的高光，MRT 启用后 HDR 链的 bloom/EV 前提失效） |
+| `e2e/smoke.spec.ts` | 改造 | A/B 改为**线性域**比较（见下）；新增「探针调试视图在 MRT 下无 GL 错误」回归用例 |
+| `index.html` | 改造 | 空 favicon 声明，消除 `/favicon.ico` 404 对「零 console error」断言的干扰 |
+
+### 关键设计决策
+
+1. **探测材质必须写满 draw buffer**：探测本身就是「用最小 shader 验证 MRT 可写」，shader 输出数必须与实际附件数一致，否则校验先行拦截、探测退化为恒 false。
+2. **调试视图用材质变体而非换材质**：`wireframe` 是渲染器级 GL 模式（与材质类型无关，three.module.js:29685 确认），法线视图走 `uDebugNormals` uniform —— 都保持在 `GBufferMaterial` 内，天然满足 MRT 输出数约束。
+3. **gAlbedo 升 RGBA16F**：S1 规划的 RGBA8 是「延迟管线存 unlit albedo」的前提；S2 用户定稿走前向着色后 gAlbedo = 最终颜色，必须保留 HDR 范围。带宽代价可接受（gNormal 本就 16F）。
+4. **A/B 断言换到线性域**：全场景都是自写 raw shader 后，three 直出路径不做 sRGB 编码，两条路径字节差被编码曲线放大（实测均值差 52.4）。把链路图按 sRGB 解码回线性再比，数值语义才成立（实测 0.602）。
+5. **MRT 状态要有可见性**：dev 下 `console.info('[capabilities] MRT …')`，避免再次出现「画面正常但一直走单目标降级」的静默状态（S1 遗留 #3 的验证入口）。
+
+### 踩坑与修复
+
+- 首轮只修了场景材质，用户仍报错：因为探测自身也在触发（且探测失败使 MRT 恒关，掩盖了场景材质问题）。两处必须同时修。
+- 修好探测后冒烟 A/B 失败（meanAbs 52.4 / overRatio 99.7%）：不是渲染错误，而是「raw 材质在直出路径不做 sRGB 编码」的系统性色调差。试过 Pearson（0.95）、对数域 Pearson（0.67）、Spearman（0.968）都不适合做判据 —— 最终改为 sRGB 解码回线性后直接差分，语义干净且阈值可收紧（<4）。
+
+### 验证
+
+- `npm run typecheck`：通过。
+- `npm run smoke`：6 passed。`[capabilities] MRT 可用（G-buffer 走 MRT）`（此前恒为不可用）；A/B 线性域平均差 0.602、差异>8 占比 3.368%（MSAA 边缘）；法线/线框视图零 console error；Bloom / URL / 布局用例原样通过。
+- 真实 GPU 待人工目视：console 应只剩 `[capabilities] MRT 可用` 这条 info，场景（含地板/球/方盒）完整可见。
+
+### 遗留 / 下一步
+
+1. **S3**：`hdrDebug` 接 gAlbedo/gNormal/gMRAO 三层调试视图 + smoke 断言；`MSAA(4)×MRT` 解析复核（BeautyPass 仍 `samples:0`）。
+2. **gltf 资产**：`SceneAsset` 的 `GltfScene` 路径仍直接渲染 GLTF 自带 `meshStandardMaterial`，p0-assets 接入时必须 traverse 替换为 `GBufferMaterial`（已在代码留 TODO）。
+3. **gbuffer.frag 剩余 TODO(S2)**：主光方向/强度硬编码、环境项 `albedo*0.03` 占位、法线空间定稿、emissive 来源。
+
+---
+
+## 2026-10-18 · p0-gbuffer-hud S2 续：gbuffer.frag 前向 Cook-Torrance BRDF（提交 `7aec617` / `d6fe459`）
+
+### 目标
+
+把 S2 脚手架的占位 Lambert 换成自己写的前向 Cook-Torrance 直接光 BRDF（GGX 法线分布 + Smith 几何遮蔽 + Schlick 菲涅尔），gAlbedo 输出最终着色——S2 脚手架上「前向 vs 延迟」的决策点落地为**前向**。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/shaders/gbuffer.frag` | 改造 | 新增 `distributionGGX` / `geometrySmith` / `fresnelSchlick` 三个函数；`main()` 里算 V/L/H 与 NoL/NoV/NoH/VoH，specular = `D·G·F / (4·NoV·NoL + ε)`，diffuse = `(1−F)·(1−metalness)·albedo/π`，`direct = (diffuse+specular)·lightColor·NoL`，加占位 ambient；gNormal/gMRAO 维持脚手架写法，TODO(S2) 标记保留 |
+
+### 关键设计决策
+
+1. **前向管线**：gAlbedo 直接存最终着色（diffuse+specular+ambient）；延迟路线（gAlbedo 存 unlit albedo、光照后置）留待真正需要全屏读 G-buffer 时再切。
+2. **D/G/F 三分量标准拆分**：与 p1-pbr-ibl 的「自写 GGX BRDF」主线同构，届时可直接把直接光段升级为多光源 + IBL。
+3. **保留的占位**：主光方向 `vec3(0.5,0.8,0.4)`、强度 `vec3(3.0)`、环境项 `albedo*0.03` 仍硬编码——接场景真实灯光与 IBL 是下一步，不在本提交范围。
+
+### 踩坑与修复
+
+- **曾尝试的 bloom「加法混合」改法已回滚**（未提交，本地验证后放弃）：把上采样改为 `CustomBlending(One,One)` + 关 `autoClear`，想规避所谓 feedback loop。实际是回归：HEAD 本就不存在 loop（读 `tAccum=mips[i-1]`、写 `scratch[i-1]` 是两张纹理，之后才 swap）；改后渲进的仍是 scratch 而非更细 mip，第 1 帧 scratch 为 0 丢失累加基底、第 ≥2 帧混入上一帧 mip 内容（运动高光拖尾，静态冒烟场景 mask 掉了），且删 `tAccum` 赋值后 `finer` 未使用触发 TS6133 构建红。已 `git checkout` 回滚并复验。记档防止重复踩。
+
+### 验证
+
+- `npm run typecheck`：通过（回滚后）。
+- `npm run smoke`：5 passed。Bloom A/B 平均差 120.945 / 最大差 210 / 差异>8 占比 99.761%，与 2026-10-13 记录的 HEAD 跑分（121 / 209 / 99.76%）一致，确认回滚到位。
+- 顺带清理：`test-results/` 历史产物堆积 844 文件，触发 Playwright 启动清理时的环境批量删除拦截，已清空。
+
+### 遗留 / 下一步（你自写）
+
+1. **`gbuffer.frag` 剩余 TODO(S2)**：主光方向/强度改 uniform 或接场景灯光；环境项 `albedo*0.03` 换真 IBL（split-sum / PMREM 属 p1-pbr-ibl）；法线 world/view 空间定稿（当前 world + TODO 标记）；emissive 来源（gMRAO.a 恒 0）。
+2. **SceneAsset 换 `GBufferMaterial`**：`SceneAsset.tsx:35-50` 四处仍用 `meshStandardMaterial`，MRT 下其 gNormal/gMRAO 附件是垃圾值（S2 脚手架条目已记）。
+3. **S3**：`hdrDebug` 调试视图接 gAlbedo/gNormal/gMRAO 三层（HUD 下拉当前只有 pass 名）+ smoke 断言；`MSAA(4)×MRT` 解析性复核（BeautyPass 暂 `samples:0`）。
+
+---
+
 ## 2026-10-13 · p0-hdr 步骤 4 续：Bloom 三段算法段自写 + S5 收尾
 
 ### 目标

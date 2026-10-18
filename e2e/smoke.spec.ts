@@ -74,6 +74,46 @@ function diffPng(a: PNG, b: PNG): ImageDiff {
   return { meanAbs: sum / (pixels * 3), maxAbs: max, overRatio: over / pixels }
 }
 
+/** sRGB → 线性（与 tonemap-output.frag 的 linearToSrgb 严格互逆） */
+function srgbToLinear(v: number): number {
+  return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+}
+
+/**
+ * 线性域像素差：`chain` 是自建链输出（末端做了 sRGB 编码的 8bit 图），
+ * `bypass` 是场景直出（raw shader 输出未经编码，字节值≈线性×255）。
+ *
+ * 为什么不能直接比字节：场景与探针已全部改用自写 raw shader 材质（MRT 要求材质
+ * 写满 3 个 fragment output，three 内建材质只写 1 个，MRT 下会触发
+ * GL_INVALID_OPERATION 且 draw 被丢弃）。three 的直出路径不对 raw 材质做 sRGB
+ * 编码，而 HDR 链在最终 pass 编码 → 两条路径字节差异被一条编码曲线放大
+ * （实测均值差 ~52），但解码回线性后数值应几乎重合。
+ *
+ * 差分尺度仍是 0..255（线性值 ×255），与原 A/B 断言的数值口径一致。
+ */
+function diffLinear(chain: PNG, bypass: PNG): ImageDiff {
+  if (chain.width !== bypass.width || chain.height !== bypass.height) {
+    throw new Error(`尺寸不一致：${chain.width}x${chain.height} vs ${bypass.width}x${bypass.height}`)
+  }
+  const pixels = chain.width * chain.height
+  let sum = 0
+  let max = 0
+  let over = 0
+  for (let i = 0; i < chain.data.length; i += 4) {
+    let worst = 0
+    for (let c = 0; c < 3; c += 1) {
+      const a = srgbToLinear(chain.data[i + c] / 255) * 255
+      const b = bypass.data[i + c]
+      const d = Math.abs(a - b)
+      sum += d
+      if (d > worst) worst = d
+    }
+    if (worst > max) max = worst
+    if (worst > 8) over += 1
+  }
+  return { meanAbs: sum / (pixels * 3), maxAbs: max, overRatio: over / pixels }
+}
+
 async function shootCanvas(page: Page, name: string): Promise<Buffer> {
   const buffer = await page.locator('canvas').first().screenshot()
   mkdirSync(SHOT_DIR, { recursive: true })
@@ -189,16 +229,17 @@ test.describe('p0-hdr · HDR 链路冒烟', () => {
 
     const onBypass = await shootClean(page, '03-bypass-ab')
 
-    const diff = diffPng(onPipeline, onBypass)
+    // 注意：两条路径的输出编码不同——自建链在末端做 sRGB 编码，直出路径对 raw 材质
+    // 不做编码（S2 起场景材质全部是自写 RawShaderMaterial）。必须先按 sRGB 解码回
+    // 线性再比，否则比的是两条编码曲线（字节域实测均值差 ~52，线性域仅个位数）。
+    const diff = diffLinear(onPipeline, onBypass)
     console.log(
-      `[A/B] 平均差=${diff.meanAbs.toFixed(3)} 最大差=${diff.maxAbs} 差异>8 的像素占比=${(diff.overRatio * 100).toFixed(3)}%`,
+      `[A/B] 线性域平均差=${diff.meanAbs.toFixed(3)} 最大差=${diff.maxAbs} 差异>8 的像素占比=${(diff.overRatio * 100).toFixed(3)}%`,
     )
-    // 注意：hello-cube 探针物体已改用自写 G-buffer 材质（RawShaderMaterial）。
-    // three 的直出路径不会对 RawShaderMaterial 做 sRGB 编码，而 HDR 链路在最终 pass 才编码，
-    // 故探针区域在两条路径下必然有色差（约 9% 像素、均值差 ~4），属预期内——
-    // 本断言只守护「three 内建材质（场景资产）与 HDR 链路一致」这条不变式，阈值据此放宽。
-    expect(diff.meanAbs, '平均像素差过大：两条路径不一致（非 G-buffer 探针区域）').toBeLessThan(6)
-    expect(diff.overRatio, '差异像素占比过大（疑似链路级回归）').toBeLessThan(0.12)
+    // 线性域下两条路径应几乎重合；残差来自 MSAA 采样差异（直出路径有 4x MSAA，
+    // 自建链 beauty samples:0）与 16F/8bit 量化。
+    expect(diff.meanAbs, '线性域平均像素差过大：自建链与直出不一致').toBeLessThan(4)
+    expect(diff.overRatio, '差异像素占比过大（疑似链路级回归）').toBeLessThan(0.08)
 
     await bypass.uncheck()
   })
@@ -291,6 +332,25 @@ test.describe('p0-hdr · HDR 链路冒烟', () => {
 
     // GLSL 编译失败会以 console error / pageerror 形式暴露
     expect(pageErrors, `pageerror: ${pageErrors.join(' | ')}`).toHaveLength(0)
+    expect(errors, `console error: ${errors.join(' | ')}`).toHaveLength(0)
+  })
+
+  test('探针调试视图（法线 / 线框）在 MRT 下无 GL 错误', async ({ page }) => {
+    // 回归守护：MRT 帧缓冲有多个活动 draw buffer，材质必须写满对应数量的
+    // fragment output。若调试视图误用 three 内建材质（只写 1 个 out），
+    // Chrome 会报「Active draw buffers with missing fragment shader outputs」
+    // 且整个 draw 被丢弃（视图直接消失）。两档视图都必须零 console error。
+    const errors: string[] = []
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') errors.push(msg.text())
+    })
+
+    for (const view of ['normals', 'wireframe']) {
+      await page.goto(`/d/hello-cube?speed=0&debug=${view}`)
+      await expect(page.locator('canvas').first()).toBeVisible()
+      await page.waitForTimeout(800)
+    }
+
     expect(errors, `console error: ${errors.join(' | ')}`).toHaveLength(0)
   })
 })

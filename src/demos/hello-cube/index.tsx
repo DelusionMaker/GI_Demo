@@ -64,6 +64,12 @@ const ShadingProbe = observer(function ShadingProbe() {
   const gbufferMaterial = useMemo(() => createGBufferMaterial({ color: '#cbd5e4' }), [])
   gbufferMaterial.uniforms.uRoughness.value = roughness
   gbufferMaterial.uniforms.uMetalness.value = metalness
+  // 调试视图不能换回 three 内建材质（meshBasicMaterial / meshNormalMaterial 只写 1 个
+  // fragment output，MRT 下会触发 GL_INVALID_OPERATION 且该 draw 被丢弃），统一用
+  // GBufferMaterial 的变体：线框 = 材质 wireframe 开关（渲染器级 GL 模式，与材质无关）；
+  // 法线 = uDebugNormals 让 gAlbedo 输出编码法线。
+  gbufferMaterial.wireframe = debug === 'wireframe'
+  gbufferMaterial.uniforms.uDebugNormals.value = debug === 'normals' ? 1 : 0
 
   useFrame((_, delta) => {
     if (ref.current) ref.current.rotation.y += delta * speed
@@ -72,13 +78,7 @@ const ShadingProbe = observer(function ShadingProbe() {
   return (
     <mesh ref={ref} position={[0, 1.15, 1.9]} castShadow>
       <boxGeometry args={[0.95, 0.95, 0.95]} />
-      {debug === 'wireframe' ? (
-        <meshBasicMaterial wireframe color="#5c9dff" />
-      ) : debug === 'normals' ? (
-        <meshNormalMaterial />
-      ) : (
-        <primitive object={gbufferMaterial} attach="material" />
-      )}
+      <primitive object={gbufferMaterial} attach="material" />
     </mesh>
   )
 })
