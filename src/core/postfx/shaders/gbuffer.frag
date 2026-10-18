@@ -18,6 +18,17 @@ uniform float uMetalness;
 uniform vec3 cameraPosition;
 uniform int uDebugNormals; // 调试视图：1 = gAlbedo 输出编码法线（见下方 main 内分支）
 
+// ── 场景灯光（GBufferLightSync 每帧从真实灯光同步，见 gbufferShared.ts）──
+uniform vec3 uLightDir;    // 指向光源的单位向量（世界空间）
+uniform vec3 uLightColor;  // 颜色 × 强度
+uniform vec3 uAmbient;     // 环境兜底（IBL 未启用时）：颜色 × 强度
+
+// ── IBL（p1 算法段使用；GBufferEnvironment + demo 旋钮提供）──
+uniform samplerCube tEnvMap; // CubeCamera 捕获的立方体贴图（带 mipmap，世界空间方向直接采样）
+uniform float uEnvIntensity; // 环境强度倍率
+uniform int uHasEnv;         // 1 = 环境贴图就绪且开关打开
+uniform int uFurnace;        // 1 = 白炉测试：环境视为纯白、直接光关闭
+
 in vec3 vWorldNormal;
 in vec3 vWorldPos;
 in vec2 vUv;
@@ -48,6 +59,31 @@ float geometrySmith(float NoV, float NoL, float rough) {
 // 菲涅尔：Schlick
 vec3 fresnelSchlick(float cosT, vec3 F0) {
   return F0 + (1.0 - F0) * pow(clamp(1.0 - cosT, 0.0, 1.0), 5.0);
+}
+
+// ==========================================================================
+// TODO(p1 · 你来写)：IBL（split-sum 环境光照）
+//
+// 目标：把 main 里的占位环境项换成真正的环境光照。自查点：
+//   1) 漫反射：irradiance(N) 近似 —— 对 tEnvMap 取高 LOD（如最大 LOD - 2）即可；
+//      能量上乘 kD = (1-F)(1-metalness)，与直接光同一套能量分配；
+//   2) 镜面：R = reflect(-V, N)，按 roughness 映射 LOD 采样预滤波环境；
+//      再乘 split-sum 的 DFG 项（可用 Karis 的 EnvBRDFApprox 解析近似，
+//      或用 BRDF LUT；关键是 F0 * brdf.x + brdf.y）；
+//   3) 白炉（uFurnace == 1）：环境采样替换为 vec3(1.0)，直接光由 main 置零；
+//      正确实现下画面应接近均匀白——单次散射 GGX 在 roughness→1 会损失多次散射
+//      能量而偏暗，属已知取舍，请把实测偏差写进 demo limitations；
+//   4) uHasEnv == 0 时返回 vec3(0.0)，由 main 的占位环境项兜底；
+//   5) 采样约定：tEnvMap 是世界空间方向的立方体贴图，最大 LOD 由尺寸决定（当前 256 → 8）。
+//
+// 建议顺序：先实现镜面（视觉差异最明显），再补漫反射；每步用白炉 + 单球验证。
+// ==========================================================================
+vec3 iblDiffuse(vec3 N, vec3 V, vec3 F0, float roughness) {
+  return vec3(0.0); // TODO(p1 · 你来写)
+}
+
+vec3 iblSpecular(vec3 N, vec3 V, vec3 F0, float roughness) {
+  return vec3(0.0); // TODO(p1 · 你来写)
 }
 
 void main() {
@@ -85,7 +121,7 @@ void main() {
   // ── gAlbedo：Cook-Torrance 直接光（前向 PBR，gAlbedo = 最终着色）──
   // viewDir 计算当前片元指向相机的方向
   vec3 V = normalize(cameraPosition - vWorldPos);   // three 已按名上传 cameraPosition
-  vec3 L = normalize(vec3(0.5, 0.8, 0.4));          // 占位主光方向（之后可改 uniform 接场景灯光）
+  vec3 L = normalize(uLightDir);                    // 场景主平行光（GBufferLightSync 同步真实灯光）
   vec3 albedo = uBaseColor;                       // 已是线性空间（THREE.Color 自动转）
   vec3 F0 = mix(vec3(0.04), albedo, uMetalness); // 介电质 F0≈0.04，金属用 albedo
 
@@ -106,10 +142,16 @@ void main() {
 
   vec3 diffuse  = kD * albedo / PI; // kD是给漫反射项乘的权重系数
 
-  vec3 lightColor = vec3(3.0);                       // 占位主光强度（调参见下）
-  vec3 direct = (diffuse + specular) * lightColor * NoL;
+  vec3 direct = (diffuse + specular) * uLightColor * NoL;
 
-  vec3 ambient = albedo * 0.03;                      // 占位环境项（真实应来自 IBL）
+  // 白炉测试：关掉直接光，只留环境（环境在 ibl* 内视为纯白）
+  if (uFurnace == 1) direct = vec3(0.0);
+
+  // 环境光：IBL 算法段接入后走 split-sum；未启用 / 未实现时用占位常量兜底
+  vec3 ambient = albedo * uAmbient;
+  if (uHasEnv == 1) {
+    ambient = (iblDiffuse(N, V, F0, uRoughness) + iblSpecular(N, V, F0, uRoughness)) * uEnvIntensity;
+  }
 
   gAlbedo = vec4(ambient + direct, 1.0);
   // gAlbedo = vec4(vec3(albedo), 1.0);

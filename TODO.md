@@ -64,7 +64,7 @@ npm run build      # 生产构建
 
 ### 阶段 1 · 直接光照（2–3 周）
 
-- [ ] **p1-pbr-ibl** PBR（Cook-Torrance / GGX + Smith + Schlick）+ IBL（split-sum / PMREM）+ 白炉测试
+- [~] **p1-pbr-ibl** PBR（Cook-Torrance / GGX + Smith + Schlick）+ IBL（split-sum）+ 白炉测试　**框架就绪（2026-10-18）：真实灯光接线 / 环境贴图 / 白炉开关；`iblDiffuse` / `iblSpecular` 算法段待你自写（见 DEVLOG）**
 - [ ] **p1-shadow** 阴影全家桶（SM / PCF / PCSS / CSM / VSM + 三种 bias 补偿）
 - [ ] **p1-light-ssr** 多光源与剔除（Forward / Deferred / Clustered 三档）+ SSR
 

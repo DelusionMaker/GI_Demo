@@ -360,6 +360,33 @@ test.describe('p0-hdr · HDR 链路冒烟', () => {
     expect(errors, `console error: ${errors.join(' | ')}`).toHaveLength(0)
   })
 
+  test('p1 环境光参数进入 URL 且切换不报错', async ({ page }) => {
+    const errors: string[] = []
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') errors.push(msg.text())
+    })
+
+    const panel = page.locator('.panel:has-text("旋转速度")')
+    const envToggle = panel.locator('.ctl-row:has-text("环境光（IBL）") input[type="checkbox"]')
+    const furnaceToggle = panel.locator('.ctl-row:has-text("白炉测试") input[type="checkbox"]')
+
+    await expect(envToggle, '环境光开关未渲染').toBeVisible()
+    await envToggle.check()
+    await expect.poll(() => page.url(), { timeout: 4000, message: 'env 未写入 URL' }).toContain('env=1')
+
+    // 打开环境光后画面仍需正常（IBL 算法段未实现时环境贡献为 0，直接光照常）
+    await page.waitForTimeout(600)
+    const shot = await shootClean(page, '09-ibl-env-on')
+    expect(luminanceStats(shot).stddev, '开启环境光后画面异常').toBeGreaterThan(5)
+
+    // 白炉开关可切换（算法段实现前画面会变黑，断言只看不报错）
+    await furnaceToggle.check()
+    await expect.poll(() => page.url(), { timeout: 4000, message: 'furnace 未写入 URL' }).toContain('furnace=1')
+    await page.waitForTimeout(300)
+
+    expect(errors, `console error: ${errors.join(' | ')}`).toHaveLength(0)
+  })
+
   test('探针调试视图（法线 / 线框）在 MRT 下无 GL 错误', async ({ page }) => {
     // 回归守护：MRT 帧缓冲有多个活动 draw buffer，材质必须写满对应数量的
     // fragment output。若调试视图误用 three 内建材质（只写 1 个 out），

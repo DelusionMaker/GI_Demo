@@ -3,6 +3,9 @@ import { observer } from 'mobx-react-lite'
 import { useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { createGBufferMaterial } from '@/core/postfx/materials/GBufferMaterial'
+import { gbufferShared } from '@/core/postfx/materials/gbufferShared'
+import { GBufferEnvironment } from '@/core/postfx/GBufferEnvironment'
+import { GBufferLightSync } from '@/core/postfx/GBufferLightSync'
 import { CAMERA_HELP, CameraRig, type CameraPreset } from '@/core/camera/CameraRig'
 import { Panel, Select, Slider, Toggle, type SelectOption } from '@/core/controls/ControlPanel'
 import { createDemoStore } from '@/core/controls/demoStore'
@@ -40,6 +43,12 @@ type DemoParams = {
   scene: SceneId
   debug: DebugView
   autopilot: boolean
+  /** 环境光（IBL）：ibDiffuse / iblSpecular 算法段实现后生效 */
+  env: boolean
+  /** 环境强度倍率 */
+  envIntensity: number
+  /** 白炉测试：环境视为纯白、直接光关闭，验证能量守恒 */
+  furnace: boolean
 }
 
 /** 注意：defaults 必须是显式标注类型的常量，否则 boolean 会被推断成字面量类型 */
@@ -50,6 +59,11 @@ const DEFAULTS: DemoParams = {
   scene: 'cornell',
   debug: 'shaded',
   autopilot: false,
+  // 默认关闭：IBL 算法段（gbuffer.frag 的 TODO(p1)）未实现前开启会得到黑屏，
+  // 与 p0-hdr 的 bloom 同理——「未实现的状态不要默认跑」。
+  env: false,
+  envIntensity: 1,
+  furnace: false,
 }
 
 /** 参数状态：MobX store，与 URL query 双向同步，链接可直接分享复现 */
@@ -83,6 +97,18 @@ const ShadingProbe = observer(function ShadingProbe() {
   )
 })
 
+/** demo 旋钮 → GBufferMaterial 的共享 uniform（环境开关 / 强度 / 白炉） */
+const GBufferParamSync = observer(function GBufferParamSync() {
+  const { env, envIntensity, furnace } = store.params
+  useFrame(() => {
+    // 白炉测试强制走环境路径（环境视为纯白），且强度归一
+    gbufferShared.uHasEnv.value = env || furnace ? 1 : 0
+    gbufferShared.uEnvIntensity.value = furnace ? 1 : envIntensity
+    gbufferShared.uFurnace.value = furnace ? 1 : 0
+  })
+  return null
+})
+
 const DemoScene = observer(function DemoScene() {
   return (
     <group>
@@ -93,7 +119,8 @@ const DemoScene = observer(function DemoScene() {
 })
 
 const DemoControls = observer(function DemoControls() {
-  const { speed, roughness, metalness, scene, debug, autopilot } = store.params
+  const { speed, roughness, metalness, scene, debug, autopilot, env, envIntensity, furnace } =
+    store.params
   return (
     <Panel title="参数" onReset={() => store.reset()}>
       <Slider
@@ -117,6 +144,27 @@ const DemoControls = observer(function DemoControls() {
         max={1}
         value={metalness}
         onChange={(value) => store.set({ metalness: value })}
+      />
+      <Toggle
+        label="环境光（IBL）"
+        hint="split-sum 环境光照；gbuffer.frag 的 ibl* 算法段实现后生效"
+        value={env}
+        onChange={(value) => store.set({ env: value })}
+      />
+      <Slider
+        label="环境强度"
+        min={0}
+        max={3}
+        step={0.1}
+        digits={1}
+        value={envIntensity}
+        onChange={(value) => store.set({ envIntensity: value })}
+      />
+      <Toggle
+        label="白炉测试"
+        hint="环境视为纯白、直接光关闭；能量守恒验证（算法段实现后生效）"
+        value={furnace}
+        onChange={(value) => store.set({ furnace: value })}
       />
       <Select
         label="场景"
@@ -158,6 +206,10 @@ const Stage = observer(function Stage() {
           shadow-mapSize-height={1024}
         />
         <directionalLight position={[-4, 2.5, -3]} intensity={0.6} color="#8fb6ff" />
+        {/* p1-pbr-ibl：场景灯光 → 材质 uniform；程序化环境 → 立方体贴图（IBL 原料） */}
+        <GBufferLightSync />
+        <GBufferEnvironment />
+        <GBufferParamSync />
         <DemoScene />
       </CanvasRoot>
 

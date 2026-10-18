@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import gbufferVert from '../shaders/gbuffer.vert'
 import gbufferFrag from '../shaders/gbuffer.frag'
+import { gbufferShared } from './gbufferShared'
 
 export interface GBufferMaterialOptions {
   /** 反照率基色（与 meshStandardMaterial 的 color 等价，默认浅灰） */
@@ -33,6 +34,9 @@ export function createGBufferMaterial(options: GBufferMaterialOptions = {}): THR
       uRoughness: { value: options.roughness ?? 0.35 },
       uMetalness: { value: options.metalness ?? 0.1 },
       uDebugNormals: { value: options.debugNormals ? 1 : 0 },
+      // 灯光 / 环境 / 白炉：挂同一批共享引用（见 gbufferShared.ts），
+      // 外部只更新一份状态，所有材质同时生效
+      ...gbufferShared,
     },
     vertexShader: gbufferVert,
     fragmentShader: gbufferFrag,

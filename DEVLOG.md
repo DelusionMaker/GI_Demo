@@ -9,6 +9,56 @@
 
 ---
 
+## 2026-10-18 · p1-pbr-ibl 框架：真实灯光接入 + 环境贴图/白炉骨架（IBL 算法段留给你）
+
+### 目标
+
+把 p1 的**框架**搭完：直接光从硬编码常量改为同步场景真实灯光；程序化环境渲成立方体贴图作为 IBL 原料；接上环境开关/强度与白炉测试入口。**split-sum 的着色数学（iblDiffuse / iblSpecular）留给用户自写**——这是作品集的核心交付，按 p0-hdr 的既有分工（框架代劳、算法自写）。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/materials/gbufferShared.ts` | 新增 | 场景级共享 uniform：主光方向/颜色、环境兜底、环境贴图/强度/开关、白炉标志；材质挂同一批引用 |
+| `src/core/postfx/GBufferLightSync.tsx` | 新增 | 每帧遍历场景灯光：主平行光（优先 castShadow）+ AmbientLight 求和 → 共享 uniform；模块级临时对象避免 GC |
+| `src/core/postfx/GBufferEnvironment.tsx` | 新增 | `RoomEnvironment`（程序化房间，无外部资产）→ CubeCamera 渲进带 mipmap 的立方体贴图（256²，有浮点缓冲用 HalfFloat） |
+| `src/core/postfx/materials/GBufferMaterial.ts` | 改造 | uniforms 展开共享状态 |
+| `src/core/postfx/shaders/gbuffer.frag` | 改造 | 新增灯光/环境/白炉 uniform；直接光改用 `uLightDir/uLightColor`；`iblDiffuse` / `iblSpecular` 占位函数 + **TODO(p1 · 你来写)**；白炉分支（关直接光） |
+| `src/demos/hello-cube/index.tsx` | 改造 | 新增 `env / envIntensity / furnace` 参数（进 URL）；面板控件；`GBufferParamSync` 同步旋钮 → uniform |
+| `src/site/demos.ts` | 改造 | `pbr-ibl` 条目 `planned → wip`，如实标注「IBL 算法段未实现、环境贴图为 mip 近似、单主光」 |
+| `e2e/smoke.spec.ts` | 改造 | 新增 p1 用例：环境光开关/白炉进 URL、开启后画面非空、零 console error |
+
+### 关键设计决策
+
+1. **共享 uniform 引用而非逐材质拷贝**：灯光/环境是场景级状态；每个材质一份拷贝会让同步逻辑散落各处。材质工厂把 `gbufferShared` 的同一批 `{ value }` 对象挂进 uniforms，外部只改一份值。
+2. **环境贴图用 CubeCamera + mipmap，不用 PMREM**：PMREM 输出是打包的 cubeUV 2D 图集，自写 shader 采样需要复刻 three 的内部映射；CubeCamera 的立方体贴图可直接 `textureLod(dir, lod)`，代价是 mip 链为 box filter（写入 limitations，GGX 预滤波留作算法升级）。
+3. **单主平行光**：多光源与剔除是 `p1-light-ssr` 的范围，本步不引入循环。
+4. **占位环境项兜底**：`uHasEnv=0` 时 `ambient = albedo * uAmbient`（同步自场景 ambientLight），保证 IBL 未实现时画面仍可用；`env` 默认关闭（与 bloom 同样的「未实现状态不默认跑」原则）。
+5. **白炉走同一套算法段**：`uFurnace=1` 时直接光置零、环境在 `ibl*` 内视为纯白，验证的是「你的 BRDF + IBL 积分是否守恒」，不额外写一套测试 shader。
+
+### 踩坑与修复
+
+- 无（环境捕获在 `useEffect` 内一次性完成；CubeCamera 自带 render target 状态保存/恢复；未出现与管线抢渲染目标的问题）。
+
+### 验证
+
+- `npm run typecheck`：通过。
+- `npm run smoke`：7 passed（新增 p1 用例），零 console error。
+- 接入真实灯光后画面变化符合预期：亮度均值 79.52 → 85.29、标准差 42.55 → 49.60（主光 3.0 → 场景 2.2、环境 0.03 → ambientLight 0.25）；球面 GGX 高光与箱体明暗关系正常。
+- 截图：`e2e/screenshots/09-ibl-env-on.png`。
+
+### 遗留 / 下一步（**你自写**）
+
+1. **`gbuffer.frag` 的两个函数**（`TODO(p1 · 你来写)`）：
+   - `iblSpecular`：`R = reflect(-V, N)`，按 roughness 选 LOD 采样 `tEnvMap`，乘 DFG 近似（Karis EnvBRDFApprox）→ `prefiltered * (F0 * brdf.x + brdf.y)`；
+   - `iblDiffuse`：高 LOD 采样近似 irradiance，乘 `kD = (1-F)(1-metalness)`；
+   - 白炉：`uFurnace=1` 时环境采样替换为 `vec3(1.0)`。
+2. **白炉验证**：开 `?furnace=1` 截图，测不同 roughness（0.1 / 0.5 / 1.0）下的亮度偏差，目标 ±2%（单次散射 GGX 在粗糙端会偏暗，如实写进 limitations）。
+3. **调优与收口**：IBL 实现后把 `env` 默认改为 `true`，`metric` 更新为实测偏差；真实 GPU 确认 HalfFloat 立方体贴图无报错。
+4. **算法升级（可选）**：自写 GGX 重要性采样预滤波，替代 CubeCamera 的 box-filter mip 链（面试可讲的下一层）。
+
+---
+
 ## 2026-10-18 · p0-gbuffer-hud S3：G-buffer 中间量调试视图 + 站点元数据纠错 + MSAA 4× 复核
 
 ### 目标
@@ -53,10 +103,11 @@
   - gMRAO 170.65 / 43.55（floor/wall ao=1 呈青，球 metal/rough 呈蓝）
 - A/B（直出 vs 自建链）线性域平均差 0.550、最大差 29.12、差异>8 占比 3.016%（开 MSAA 前为 0.602 / 68.4 / 3.368%，边缘对齐明显改善）。
 - 截图：`e2e/screenshots/06-gbuffer-{albedo,normal,mrao}.png`。
+- 真实 GPU 目视（用户回报 2026-10-18）：MRT 路径画面完整、无 GL 错误，三层调试视图内容正常。
 
 ### 遗留 / 下一步
 
-1. **真实 GPU 取数（性能故事的第一手数据）**：`npm run dev` 打开 `/d/hello-cube?speed=0`，读性能面板逐 pass 的 CPU/GPU ms，记录 GPU 型号 + DPR + 各项数值；对照 `?bloom=1` 与 `?bloom=0` 的 bloom pass 耗时。数据入 DEVLOG 后即可写「为什么 bloom 是这条链最贵的一环」。
+1. **性能故事推迟（2026-10-18 实测结论）**：真实 GPU 上逐 pass GPU 耗时看不出差异——当前占位场景只有 4 个 mesh / ~6.7k 三角形，各 pass 都在亚毫秒噪声内，开关 bloom 的差值也被噪声淹没。**结论：性能数据要在 p1（更多材质/灯光）与 p0-assets（真实资产）之后采**；届时给一组受控对照（bloom 开/关、分辨率 / DPR 阶梯、逐 pass GPU ms）才有可讲的「为什么掉帧、怎么优化」。
 2. **p1-pbr-ibl（下一步主线）**：`gbuffer.frag` 的硬编码主光 / 占位环境项换成场景真实灯光 + IBL（split-sum / PMREM），补白炉测试与 three 内置 PBR 对照。
 3. **G-buffer 深度可视化**：调试视图目前只有颜色三附件；后续 SSR 前把深度也接入（顺带验证 MSAA 下 depth blit 可采样）。
 
