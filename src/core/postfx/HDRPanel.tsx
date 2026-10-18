@@ -1,4 +1,5 @@
 import { observer } from 'mobx-react-lite'
+import { capabilitiesStore } from '../capabilities'
 import { Panel, Select, Slider, Toggle, type SelectOption } from '../controls/ControlPanel'
 import type { TonemapMode } from './HDRPipeline'
 import { hdrParams } from './hdrParams'
@@ -27,9 +28,22 @@ export const HDRPanel = observer(function HDRPanel() {
 
   if (!runtime.pipelineActive) return null
 
+  // G-buffer 三层是 MRT 的原始数据（S3）；无 MRT 的降级环境不提供，避免选到黑屏
+  const gbufferOptions: SelectOption<string>[] = capabilitiesStore.mrt
+    ? [
+        { value: 'gbuffer:albedo', label: 'G-buffer · gAlbedo（原始值）' },
+        { value: 'gbuffer:normal', label: 'G-buffer · gNormal' },
+        { value: 'gbuffer:mrao', label: 'G-buffer · gMRAO' },
+      ]
+    : []
+
   const debugOptions: SelectOption<string>[] = [
     { value: 'none', label: '完整链路' },
-    ...runtime.passNames.map((name) => ({ value: name, label: `仅到 ${name} 为止` })),
+    // gbuffer-debug 是调试出口本身，不作为「截断点」出现在下拉里
+    ...runtime.passNames
+      .filter((name) => name !== 'gbuffer-debug')
+      .map((name) => ({ value: name, label: `仅到 ${name} 为止` })),
+    ...gbufferOptions,
   ]
 
   return (

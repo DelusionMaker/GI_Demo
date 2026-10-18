@@ -260,11 +260,36 @@ test.describe('p0-hdr · HDR 链路冒烟', () => {
     const full = await shootClean(page, '05-debug-none')
     expect(luminanceStats(full).stddev).toBeGreaterThan(5)
 
-    // 当前链路只有 beauty + tonemap-output 两段，截断到 beauty 后链路等价；
-    // pass 数 ≥ 3（bloom / luminance 接入）后才具备视觉可区分性。
+    // 截断到 beauty 后链路等价（beauty 之后只有 luminance 旁路 + bloom 关闭 + tonemap 直通）
     const diff = diffPng(truncated, full)
     console.log(`[调试视图] 两种视图平均差=${diff.meanAbs.toFixed(3)}`)
     expect(diff.meanAbs).toBeLessThan(3)
+
+    // ---- S3：G-buffer 三层原始数据视图 ----
+    // 前提：MRT 可用（headless 的 SwiftShader 也支持；不可用时下拉不含这些选项）
+    const gbufferValues = await select
+      .locator('option')
+      .evaluateAll((options) =>
+        options.map((option) => (option as HTMLOptionElement).value).filter((v) => v.startsWith('gbuffer:')),
+      )
+    expect(gbufferValues, 'MRT 可用但下拉缺少 G-buffer 三个视图').toHaveLength(3)
+
+    for (const view of ['gbuffer:albedo', 'gbuffer:normal', 'gbuffer:mrao']) {
+      await select.selectOption(view)
+      await expect(select).toHaveValue(view)
+      await page.waitForTimeout(300)
+      const shot = await shootClean(page, `06-${view.replace(':', '-')}`)
+      const stats = luminanceStats(shot)
+      console.log(`[G-buffer] ${view} 亮度均值=${stats.mean.toFixed(2)} 标准差=${stats.stddev.toFixed(2)}`)
+      expect(stats.stddev, `${view} 画面异常（疑似黑屏 / 附件未绑定）`).toBeGreaterThan(3)
+      // 原始数据视图必须与完整链路明显不同，排除「下拉没生效但画面恰好一样」的假阳性
+      const gbufferDiff = diffPng(full, shot)
+      expect(gbufferDiff.maxAbs, `${view} 与完整链路无差异：调试视图可能未生效`).toBeGreaterThan(20)
+    }
+
+    // 恢复完整链路，避免影响后续用例
+    await select.selectOption('none')
+    await expect(select).toHaveValue('none')
   })
 
   test('S2 曝光与曲线参数进入 URL（可分享复现）', async ({ page }) => {

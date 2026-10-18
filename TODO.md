@@ -59,7 +59,7 @@ npm run build      # 生产构建
   - [ ] 截图 / 录制工具接口（封面 GIF + 视觉回归）→ eng-shared 接入
   - [ ] monorepo 拆分 → eng-shared
 - [x] **p0-hdr** HDR 管线与色调映射（ACES / AgX、自动曝光、物理 bloom）　**✅ S1–S5 已完成（见 DEVLOG 2026-10-13）**
-- [~] **p0-gbuffer-hud** G-buffer MRT + 性能 HUD（GPU 计时已接；S1/S2 完成——BRDF 自写 + 全场景 `GBufferMaterial`，MRT 探测已修复并真正启用；S3 调试视图待做）
+- [x] **p0-gbuffer-hud** G-buffer MRT + 性能 HUD　**✅ S1–S3 完成（2026-10-18，见 DEVLOG）**：GPU 计时 / MRT 真实启用 / 自写前向 BRDF / 三层调试视图
 - [ ] **p0-assets** 准备 3 个场景资产（Cornell box / 室内 / 户外）
 
 ### 阶段 1 · 直接光照（2–3 周）
@@ -368,19 +368,19 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 | --- | --- | --- | --- |
 | **S1** | MRT 基础设施：BeautyPass.target 改为 MRT（3 附件）；Pipeline 创建多渲染目标、把 `gAlbedo` 作下游输入、暂存 G-buffer 供调试 / 后续读取 | G-buffer 渲染无 WebGL error；下游以 gAlbedo 为输入，观感与单通道一致（回归） | ✅ 脚手架完成（2026-10-13） |
 | **S2** | **你自写核心**：`GBufferMaterial`（GLSL3，多 `out` 输出 albedo/normal/mrao）、把 hello-cube 的 meshStandardMaterial 换成它、处理法线编码与精度 | 各附件内容合理（albedo≈原色、normal 表面有渐变、mrao 分通道可见） | ✅ 主体完成：前向 Cook-Torrance（GGX/Smith/Schlick）已自写；场景与探针全部换 `GBufferMaterial`，MRT 探测修复后真正启用（2026-10-18）。剩余占位：硬编码主光/环境项、法线空间定稿、emissive |
-| **S3** | 调试可视化 + 接线：`hdrDebug` 增加 gAlbedo/gNormal/gMRAO，HUD 下拉接上并采样对应附件呈现；smoke 加 G-buffer 渲染断言 | 调试视图可切三层且内容合理；`npm run typecheck` / `smoke` 通过 | ⬜ 待做（脚手架可代劳接线，调试 shader 你写） |
+| **S3** | 调试可视化 + 接线：`hdrDebug` 增加 gAlbedo/gNormal/gMRAO，HUD 下拉接上并采样对应附件呈现；smoke 加 G-buffer 渲染断言 | 调试视图可切三层且内容合理；`npm run typecheck` / `smoke` 通过 | ✅ 完成（2026-10-18）：独立 `GBufferDebugPass` 原始数据出屏；MSAA 4× 复核通过 |
 
-### 4.3 验收清单
+### 4.3 验收清单（2026-10-18 全部通过）
 
-- [ ] MRT 渲染无 console / WebGL error
-- [ ] 调试视图可切 albedo / normal / mrao，且各层内容合理（normal 表面有渐变、mrao 分通道可见）
-- [ ] 现有 HDR 链路以 gAlbedo 为输入，观感与单通道时一致（回归）
-- [ ] `MSAA(4) + depthTexture` 在 MRT 下正常解析（供后续 SSR）；若不稳，明确降级 `samples:0` 并记 limitations
-- [ ] `npm run typecheck` 与 `smoke` 通过
+- [x] MRT 渲染无 console / WebGL error（含探测与调试视图两条路径）
+- [x] 调试视图可切 albedo / normal / mrao，且各层内容合理（normal 表面有渐变、mrao 分通道可见）
+- [x] 现有 HDR 链路以 gAlbedo 为输入，观感与单通道时一致（回归改为线性域 A/B，见 DEVLOG）
+- [x] `MSAA(4) + depthTexture` 在 MRT 下正常解析（三附件已实测；深度由 three `resolveDepthBuffer` 默认解析，SSR 阶段需目标设备复核）
+- [x] `npm run typecheck` 与 `smoke` 通过
 
 ### 4.4 风险与注意事项
 
-- **MSAA × MRT × DepthTexture 解析**（已知风险）：脚手架阶段 `samples:0` 保证可用，MSAA 恢复或改 TAA 留作 S3 决策。
+- **MSAA × MRT × DepthTexture 解析**：S3 复核后已开启 `samples: 4`（三附件 resolve 正常；A/B 最大差 68→29）。three r170 默认 `resolveDepthBuffer=true`，深度会 blit 到 DepthTexture；SSR 阶段仍需目标设备实测，不稳则退回 `samples:0` 或改 TAA。
 - **MRT 下所有材质必须写满 fragment output**（2026-10-18 踩坑）：three 会把全部附件设为 draw buffer，three 内建材质只写 1 个 out，会触发 `GL_INVALID_OPERATION: Active draw buffers with missing fragment shader outputs` 且 draw 被丢弃。新增场景/调试材质时必须用 `GBufferMaterial` 变体（或自写多 out shader）。
 - **normal 编码空间与精度**：world / view 选择 + RGBA16F 防 banding。
 - **MRT 附件可渲染性**：`RGBA16F` 需 `EXT_color_buffer_float`（已探测 `colorBufferFloat` ✓）。

@@ -53,27 +53,29 @@ export const STATUS_LABEL: Record<DemoStatus, string> = {
 export const DEMOS: DemoMeta[] = [
   {
     id: 'hello-cube',
-    title: 'hello-cube',
-    oneLiner: '骨架冒烟测试：一条最小链路串通画布、相机装置、控制面板、URL 状态与性能面板。',
+    title: 'G-buffer MRT + 前向 PBR',
+    oneLiner:
+      '先把延迟渲染的原料层铺好：三附件 G-buffer（着色 / 法线 / MRAO）+ 自写 Cook-Torrance 直接光，并把这些中间量直接可视化。',
     layer: 'L1',
-    stack: 'R3F + three.js',
+    stack: 'WebGL2 · MRT',
     perf: 'realtime',
-    metric: '模板复用 · 0 行 shader 起步',
-    effort: '0.5 天',
-    status: 'scaffold',
+    metric: 'G-buffer MRT · 自写 GGX BRDF · 三层调试视图',
+    effort: '2–3 天',
+    status: 'wip',
     problem:
-      'p0-base 的验收物：任何后续 demo 只需实现自己的 Scene 与控制项，就能直接获得预设视角、巡航、参数序列化与性能采集。',
+      'G-buffer 是 SSR / SSGI / 阴影等屏幕空间特效的原料层；本 demo 验证自建 pass 链能承载 MRT，并把各附件可视化以便逐层核对正确性。',
     algorithm: [
-      '渲染器工厂集中分叉后端（当前 WebGL2），其余代码不感知后端差异。',
-      'CameraRig 统一管理 2 个预设视角 + 绕轴巡航 + 轨道操作，键盘 1..n / 空格。',
-      'createDemoStore 把参数写入 URL query，只记录与默认值不同的项。',
-      'PerfProbe 在画布内每帧采集，PerfPanel 在 DOM 侧用 rAF 节流读取，避免每帧重渲染。',
+      '场景渲进 3 附件 G-buffer（gAlbedo / gNormal / gMRAO）+ 可采样深度，下游 HDR 链以 gAlbedo 为 beauty。',
+      '自写前向 Cook-Torrance 直接光：GGX 法线分布 + Smith 几何遮蔽 + Schlick 菲涅尔。',
+      '法线以 world-space 编码进 gNormal（RGBA16F），MRAO 分通道存 metal / roughness / ao / emissive。',
+      '调试视图可切 gAlbedo / gNormal / gMRAO，直接查看 MRT 原始数据（不经过 tonemap / 曝光）。',
     ],
     limitations: [
-      '尚未接入自写色调映射与 HDR 渲染目标（见 p0-hdr）。',
-      'GPU 时间未采集：renderer.info 不含 GPU 时间，需接 EXT_disjoint_timer_query_webgl2（见 p0-gbuffer-hud）。',
+      '自写 BRDF 的光照仍是硬编码单主光 + 占位环境项，多光源与 IBL 待 p1-pbr-ibl。',
+      'MSAA 在 MRT 下暂关闭（samples: 0），边缘锯齿依赖后续 MSAA / TAA 方案。',
+      'MRT 需要 EXT_color_buffer_float；不支持的设备降级为单目标，G-buffer 选项自动隐藏。',
       '场景为程序化占位，真实资产待 p0-assets 补齐。',
-      '材质使用 three 内置 PBR，自写 GGX BRDF 待 p1-pbr-ibl 替换。',
+      'GPU 计时仅在支持 EXT_disjoint_timer_query_webgl2 的设备显示，软件渲染器下不可用。',
     ],
     sources: [
       { label: 'react-three-fiber 文档', href: 'https://r3f.docs.pmnd.rs/' },

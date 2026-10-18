@@ -164,8 +164,8 @@ const Stage = observer(function Stage() {
       <Hud
         topLeft={
           <HudTitle
-            title="hello-cube"
-            subtitle="自建 pass 冒烟测试：场景 → G-buffer MRT → HDR 目标 → 呈现（S1–S2）"
+            title="G-buffer MRT + 前向 PBR"
+            subtitle="三附件 G-buffer（着色 / 法线 / MRAO）→ 自写 Cook-Torrance → HDR 链；调试视图可看中间量"
           />
         }
         topRight={<PerfPanel />}

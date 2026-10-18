@@ -16,6 +16,11 @@ export interface PassContext {
   input: THREE.Texture | null
   /** 链首（beauty）产生的深度纹理，供后续 SSR / SSGI 复用；无则为 null */
   inputDepth: THREE.DepthTexture | null
+  /**
+   * 链首（beauty）产出的 G-buffer MRT（本帧已渲好；未启用 MRT / 尚未渲染时为 null）。
+   * 供 S3 调试视图与后续 SSR / SSGI 读取；textures[0..2] = gAlbedo / gNormal / gMRAO。
+   */
+  gBuffer: THREE.WebGLRenderTarget | null
   /** 曝光偏移（EV 语义）。着色器内 multiplier = exp2(exposureEV) */
   exposureEV: number
 }

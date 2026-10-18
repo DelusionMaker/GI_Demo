@@ -22,10 +22,15 @@ export class BeautyPass implements Pass {
     format: 'RGBA16F' as const,
     filter: 'linear' as const,
     /**
-     * MSAA 在 MRT 下的解析稳定性是已知风险（见 TODO「p0-gbuffer-hud 拆解」）；
-     * G-buffer 脚手架阶段先用 0，保证多附件可用，MSAA 恢复 / 改 TAA 留待 S3 决策。
+     * MSAA：S3 复核后开启 4x（脚手架阶段为 0）。
+     * - 三附件均正确 resolve（G-buffer 调试视图数值与 0x 时一致）；
+     * - 与直出路径（自带 MSAA）的 A/B 最大差从 68.4 → 29.1，边缘对齐，
+     *   残差主要是 16F/8bit 量化；
+     * - three r170 默认 `resolveDepthBuffer = true`（见 updateMultisampleRenderTarget），
+     *   MSAA 下深度会 blit 到 DepthTexture；SSR 阶段仍需在目标设备实测确认
+     *   （不同驱动对 depth blit 的支持有差异，不稳则退回 samples:0 或改 TAA）。
      */
-    samples: 0,
+    samples: 4,
     /** 深度纹理在 RT 创建时即挂好，避免 p0-gbuffer-hud / SSR / SSGI 回头改 RT */
     depthTexture: true,
     /**

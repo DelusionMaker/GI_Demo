@@ -5,6 +5,7 @@ import { BeautyPass } from './passes/BeautyPass'
 import { TonemapOutputPass } from './passes/TonemapOutputPass'
 import { LuminancePass } from './passes/LuminancePass'
 import { BloomPass } from './passes/BloomPass'
+import { GBufferDebugPass } from './passes/GBufferDebugPass'
 import type { PassTiming } from './Pass'
 
 export type { PassTiming }
@@ -71,6 +72,7 @@ export class HDRPipeline {
   private readonly luminancePass = new LuminancePass()
   private readonly bloomPass = new BloomPass()
   private readonly output = new TonemapOutputPass()
+  private readonly gbufferDebugPass = new GBufferDebugPass()
 
   private static warnedFallback = false
 
@@ -90,6 +92,9 @@ export class HDRPipeline {
     this.pipeline.addPass(this.luminancePass)
     this.pipeline.addPass(this.bloomPass)
     this.pipeline.addPass(this.output)
+    // 调试出口放在最后：仅当 setGBufferDebug() 选中某个 G-buffer 附件时启用，
+    // 此时 tonemap-output 会被同时关闭（互斥，保证只有一个 toScreen pass）
+    this.pipeline.addPass(this.gbufferDebugPass)
     this.pipeline.setSize(width, height)
 
     // 默认值：EV=0（exp2(0)=1 直通）、线性曲线
@@ -130,6 +135,18 @@ export class HDRPipeline {
 
   setClipView(enabled: boolean): void {
     this.output.setClipView(enabled)
+  }
+
+  /**
+   * 切换 G-buffer 调试视图（S3）。
+   * attachment: 0 = gAlbedo / 1 = gNormal / 2 = gMRAO；null = 关闭，恢复完整链路。
+   *
+   * 与链尾 tonemap-output 互斥：调试视图看的是 MRT 原始数据，不经过曝光 / 曲线 / sRGB 编码。
+   */
+  setGBufferDebug(attachment: number | null): void {
+    this.gbufferDebugPass.enabled = attachment !== null
+    if (attachment !== null) this.gbufferDebugPass.attachment = attachment
+    this.output.enabled = attachment === null
   }
 
   /** 自动曝光测光 pass（驱动组件据此隔帧回读 → 自动 EV + 直方图） */

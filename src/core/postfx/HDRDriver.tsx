@@ -1,7 +1,8 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
+import { capabilitiesStore } from '../capabilities'
 import { HDRPipeline } from './HDRPipeline'
-import { hdrParams, resolveDebugPass } from './hdrParams'
+import { hdrParams, resolveDebugPass, resolveGBufferDebug } from './hdrParams'
 import { hdrStore } from './hdrStore'
 
 /** 统计推送节流：与 perfStore 的 5Hz 采样一致，避免每帧触发重渲染 */
@@ -57,7 +58,11 @@ export function HDRDriver() {
 
     // UI 旋钮 → 渲染核心（渲染核心不认识 MobX）
     core.bypass = knobs.bypass
-    core.debugPass = resolveDebugPass(knobs.hdrDebug)
+    // 调试视图两条路径：G-buffer 数据视图（直接出屏原始附件）/ 按 pass 名截断。
+    // 无 MRT 时忽略 URL 里遗留的 gbuffer 参数，避免选到黑屏（gBuffer 为 null）
+    const gbufferDebug = capabilitiesStore.mrt ? resolveGBufferDebug(knobs.hdrDebug) : null
+    pipeline.setGBufferDebug(gbufferDebug)
+    core.debugPass = gbufferDebug === null ? resolveDebugPass(knobs.hdrDebug) : null
     pipeline.setTonemap(knobs.tm)
     pipeline.setClipView(knobs.clipView)
 
@@ -69,7 +74,8 @@ export function HDRDriver() {
     pipeline.setExposureEV(displayEV)
 
     // Bloom 开关、强度与阈值参数（算法段由用户实现，这里只同步旋钮）
-    pipeline.bloom.enabled = knobs.bloom
+    // G-buffer 调试视图直接出屏原始附件，bloom 没有意义，顺带跳过以省一次级联
+    pipeline.bloom.enabled = knobs.bloom && gbufferDebug === null
     pipeline.bloom.intensity = knobs.bloomIntensity
     pipeline.bloom.threshold = knobs.bloomThreshold
     pipeline.bloom.knee = knobs.bloomKnee

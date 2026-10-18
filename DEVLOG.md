@@ -9,6 +9,59 @@
 
 ---
 
+## 2026-10-18 · p0-gbuffer-hud S3：G-buffer 中间量调试视图 + 站点元数据纠错 + MSAA 4× 复核
+
+### 目标
+
+让 S1/S2 的 G-buffer 工作**在页面上可见**（三条筛选标准之「可视化中间量」）：调试视图下拉可直接切 gAlbedo / gNormal / gMRAO；同时修正站点上已过时的 demo 描述，并复核 S1 遗留的 MSAA×MRT 决策。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/shaders/gbuffer-debug.frag` | 新增 | 三附件采样 + `uAttachment` 分支；**原始数据出屏**（不乘曝光、不 tonemap、不做 sRGB 编码） |
+| `src/core/postfx/passes/GBufferDebugPass.ts` | 新增 | `toScreen` 调试出口，从 `ctx.gBuffer` 取本帧 MRT 附件 |
+| `src/core/postfx/Pass.ts` | 改造 | `PassContext.gBuffer`（textures[0..2] = gAlbedo / gNormal / gMRAO） |
+| `src/core/postfx/Pipeline.ts` | 改造 | 每帧重置并透传 `gBuffer`；链首渲完后暂存本帧 MRT |
+| `src/core/postfx/HDRPipeline.ts` | 改造 | 挂载调试 pass；`setGBufferDebug(0/1/2/null)` 与 tonemap-output **互斥** |
+| `src/core/postfx/hdrParams.ts` | 改造 | `resolveGBufferDebug()`：`'gbuffer:normal'` 等取值进 URL，可直接分享 |
+| `src/core/postfx/HDRDriver.tsx` | 改造 | 每帧同步；无 MRT 时忽略 URL 残留 gbuffer 参数；数据视图期间跳过 bloom |
+| `src/core/postfx/HDRPanel.tsx` | 改造 | 下拉新增三项（仅 MRT 可用时显示）；pass 截断列表过滤 `gbuffer-debug` |
+| `src/core/postfx/passes/BeautyPass.ts` | 改造 | `samples: 0 → 4`（S3 复核结论，见下） |
+| `src/demos/hello-cube/index.tsx` | 改造 | HUD 标题改为「G-buffer MRT + 前向 PBR」，副标题说明链路 |
+| `src/site/demos.ts` | 改造 | hello-cube 条目纠错：删除「未接 HDR / 材质用内建 PBR」两条过时 limitations，补 G-buffer 算法描述与真实 limitations，status `scaffold → wip` |
+| `e2e/smoke.spec.ts` | 改造 | 调试视图用例扩展：三个 G-buffer 选项存在 + 各视图非空 + 与完整链路明显不同 |
+
+### 关键设计决策
+
+1. **独立 `toScreen` 调试 pass，与 tonemap-output 互斥**：G-buffer 是数据通道，经过曝光/曲线/编码反而失真；`setGBufferDebug()` 保证同一帧只有一个出口。
+2. **三个视图统一「原始值」语义**：gNormal / gMRAO 按字节显示才是标准调试观感；gAlbedo 因此显示为暗的线性值（label 已标注「原始值」，带 tonemap 的看「仅到 beauty 为止」）。
+3. **复用 hdrDebug 下拉 + URL 序列化**：`gbuffer:*` 前缀解析，链接可直接复现某个中间量视图。
+4. **能力门控 + 双保险**：MRT 不可用时下拉不显示三项；驱动侧同时忽略 URL 残留参数，避免黑屏。
+5. **MSAA 4× 启用**：S3 复核发现三附件 resolve 正常，且 A/B 最大差从 68.4 → 29.1（链路边缘与直出路径对齐）；three r170 `resolveDepthBuffer` 默认 true（源码 `updateMultisampleRenderTarget` 处会 blit 深度），故不再沿用「MSAA 下深度不可用」的旧结论——但 SSR 阶段仍需在目标设备实测。
+
+### 踩坑与修复
+
+- 无（调试 pass 走现成的 FullscreenQuad + RawShaderMaterial 模式；MRT 附件缺失时 three 绑定空纹理输出黑色，不产生 GL 错误）。
+
+### 验证
+
+- `npm run typecheck`：通过。
+- `npm run smoke`：6 passed。G-buffer 三层与完整链路明显不同且非空：
+  - gAlbedo 亮度均值 27.60 / 标准差 28.47（原始线性值，偏暗属预期）
+  - gNormal 179.42 / 51.49（标准法线图：地板 +Y 绿、墙面 +Z 蓝紫、球面渐变）
+  - gMRAO 170.65 / 43.55（floor/wall ao=1 呈青，球 metal/rough 呈蓝）
+- A/B（直出 vs 自建链）线性域平均差 0.550、最大差 29.12、差异>8 占比 3.016%（开 MSAA 前为 0.602 / 68.4 / 3.368%，边缘对齐明显改善）。
+- 截图：`e2e/screenshots/06-gbuffer-{albedo,normal,mrao}.png`。
+
+### 遗留 / 下一步
+
+1. **真实 GPU 取数（性能故事的第一手数据）**：`npm run dev` 打开 `/d/hello-cube?speed=0`，读性能面板逐 pass 的 CPU/GPU ms，记录 GPU 型号 + DPR + 各项数值；对照 `?bloom=1` 与 `?bloom=0` 的 bloom pass 耗时。数据入 DEVLOG 后即可写「为什么 bloom 是这条链最贵的一环」。
+2. **p1-pbr-ibl（下一步主线）**：`gbuffer.frag` 的硬编码主光 / 占位环境项换成场景真实灯光 + IBL（split-sum / PMREM），补白炉测试与 three 内置 PBR 对照。
+3. **G-buffer 深度可视化**：调试视图目前只有颜色三附件；后续 SSR 前把深度也接入（顺带验证 MSAA 下 depth blit 可采样）。
+
+---
+
 ## 2026-10-18 · 修复 GL_INVALID_OPERATION（MRT draw buffer 缺 fragment output）+ MRT 探测自我否决
 
 ### 目标

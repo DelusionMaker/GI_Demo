@@ -157,6 +157,8 @@ export class Pipeline {
     const chain = this.resolveChain()
     this.releaseAll()
     this.inputDepth = null
+    // 同上：G-buffer 引用每帧由链首重新填充，避免复用池中的旧目标残留
+    this.gBuffer = null
 
     // GPU 计时扩展：每帧首次需要时申请一次并缓存；disjoint 每帧只读一次
     // （读取 GPU_DISJOINT_EXT 会清除该标志，故必须每帧只取一次）
@@ -198,6 +200,7 @@ export class Pipeline {
         frame: this.frame,
         input,
         inputDepth: this.inputDepth,
+        gBuffer: this.gBuffer,
         exposureEV: this.exposureEV,
       }
 

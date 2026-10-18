@@ -53,3 +53,18 @@ export const hdrParams = createDemoStore(HDR_PARAM_DEFAULTS)
 export function resolveDebugPass(value: string): string | null {
   return value === 'none' ? null : value
 }
+
+/**
+ * G-buffer 调试视图取值（S3）：'gbuffer:normal' → 1（0 = gAlbedo / 1 = gNormal / 2 = gMRAO）。
+ * 与「按 pass 名截断」共用同一个 hdrDebug 下拉，因此能自动进 URL。
+ */
+const GBUFFER_DEBUG_ATTACHMENT: Record<string, number> = {
+  'gbuffer:albedo': 0,
+  'gbuffer:normal': 1,
+  'gbuffer:mrao': 2,
+}
+
+/** 非 G-buffer 视图返回 null（此时走 resolveDebugPass 的 pass 截断逻辑） */
+export function resolveGBufferDebug(value: string): number | null {
+  return GBUFFER_DEBUG_ATTACHMENT[value] ?? null
+}
