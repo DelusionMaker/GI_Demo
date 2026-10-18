@@ -99,9 +99,12 @@ void main() {
   float G = geometrySmith(NoV, NoL, uRoughness); // 几何遮蔽 Smith 随着角度变掠射，逐渐降低微表面的贡献率，模拟真实世界中粗糙表面边缘变暗、高光收敛的物理现象
   vec3  F = fresnelSchlick(VoH, F0); // Fresnel 视线与表面法线夹角越大（越接近掠射角），表面的反射能力就越强‌
 
-  vec3 specular = (D * G * F) / (4.0 * NoV * NoL + 1e-4);
-  vec3 kD = (vec3(1.0) - F) * (1.0 - uMetalness);   // 金属无漫反射
-  vec3 diffuse  = kD * albedo / PI;
+  vec3 specular = (D * G * F) / (4.0 * NoV * NoL + 1e-4); // 镜面反射项 (4.0 * NoV * NoL + 1e-4) 校正因子，用于补偿微表面模型和真实反射之间的能量差异；加上 1e-4 只是防止除零。
+  vec3 kD = (vec3(1.0) - F) * (1.0 - uMetalness);   
+  // vec3(1.0) - F‌：F 是菲涅尔项（Fresnel），表示当前角度下镜面反射占入射光的比例。用 1 减去它，就得到剩余能进入材质内部的光线比例，这是能量守恒的体现——反射和折射（漫反射）加起来不能超过 1。
+  // * (1.0 - uMetalness)‌：金属度越高，光线越倾向直接反射而不是进入内部散射。金属（metalness=1）没有漫反射，所以这里直接乘 (1.0 - metalness) 把漫反射系数压到 0；非金属（metalness=0）则保留完整的漫反射能量。‌‌
+
+  vec3 diffuse  = kD * albedo / PI; // kD是给漫反射项乘的权重系数
 
   vec3 lightColor = vec3(3.0);                       // 占位主光强度（调参见下）
   vec3 direct = (diffuse + specular) * lightColor * NoL;
