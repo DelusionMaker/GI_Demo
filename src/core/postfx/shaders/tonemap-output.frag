@@ -28,12 +28,9 @@ vec3 linearToSrgb(vec3 c) {
 }
 
 // ==========================================================================
-// TODO(S2 · 你来写)：三条色调映射曲线
+// 三条色调映射曲线（已实现）
 //
-//   mode 1 = ACES(Narkowicz) / 2 = AgX / 3 = Reinhard / 0 = 直通
-//
-// 现在三个分支都直接返回入参（等于直通），所以切换下拉暂时看不出区别 ——
-// 这是预期的，因为曲线本体还没写。
+//   mode 1 = ACES(Narkowicz) / 2 = AgX(Sobotka 拟合) / 3 = Reinhard / 0 = 直通
 //
 // 三个分支必须与 CPU 侧 src/core/postfx/toneCurves.ts 的结果一致
 // （曲线图画的是那一份）。同步策略见该文件顶部说明。
@@ -81,7 +78,7 @@ vec3 agxTonemap(vec3 val) {
 vec3 tonemap(vec3 color, int mode) {
   color = max(color, 0.0);
   if (mode == 1) {
-    // TODO(S2)：ACES —— 形如 x(ax+b) / (x(cx+d)+e) 的有理函数
+    // ACES（Narkowicz 2015 拟合）：形如 x(ax+b) / (x(cx+d)+e) 的有理函数
     float a = 2.51;
     float b = 0.03;
     float c = 2.43;
@@ -96,7 +93,7 @@ vec3 tonemap(vec3 color, int mode) {
     return color;
   }
   if (mode == 3) {
-    // TODO(S2)：Reinhard —— 从最简形式起步
+    // Reinhard：最简形式 color / (1 + color)
     color = saturate(color / (1.0 + color));
     return color;
   }

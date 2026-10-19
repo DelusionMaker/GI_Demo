@@ -38,6 +38,11 @@ layout(location = 1) out vec4 gNormal;
 layout(location = 2) out vec4 gMRAO;
 
 const float PI = 3.14159265359;
+// 放在两个函数定义附近，或直接在 iblSpecular 内联
+const float ENV_MAX_LOD = 8.0; // 256² cube → log2(256) = 8
+// 漫反射 IBL 的 irradiance 近似 LOD：越高 = 环境越"抹平"，越接近 cosine-weighted irradiance 的廉价近似。
+// 调参旋钮：环境高频细节越多越该调高；RoomEnvironment 这类平滑环境 7 即可。
+const float IBL_DIFFUSE_LOD = ENV_MAX_LOD - 1.0;
 
 // 法线分布函数：GGX
 float distributionGGX(float NoH, float rough) {
@@ -61,6 +66,17 @@ vec3 fresnelSchlick(float cosT, vec3 F0) {
   return F0 + (1.0 - F0) * pow(clamp(1.0 - cosT, 0.0, 1.0), 5.0);
 }
 
+// Karis 的 EnvBRDFApprox 解析
+vec3 envBRDFApprox(vec3 F0, float NoV, float roughness) {
+  // Karis 2013, UE4 用的同款标量近似，返回 F0*AB.x + AB.y
+  vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
+  vec4 c1 = vec4( 1.0,  0.0425, 1.0425, -0.04);
+  vec4 r = roughness * c0 + c1;
+  float a004 = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.y;
+  vec2 AB = vec2(-1.73296, 1.35963) * a004 + r.zw;
+  return F0 * AB.x + AB.y; // 注意 AB.y 不带 F0，对应 F90=1 的 Fresnel
+}
+
 // ==========================================================================
 // TODO(p1 · 你来写)：IBL（split-sum 环境光照）
 //
@@ -79,11 +95,29 @@ vec3 fresnelSchlick(float cosT, vec3 F0) {
 // 建议顺序：先实现镜面（视觉差异最明显），再补漫反射；每步用白炉 + 单球验证。
 // ==========================================================================
 vec3 iblDiffuse(vec3 N, vec3 V, vec3 F0, float roughness) {
-  return vec3(0.0); // TODO(p1 · 你来写)
+  if (uHasEnv == 0) return vec3(0.0);
+  // irradiance ≈ 取很高 LOD（接近均匀）的环境采样
+  vec3 irradiance = (uFurnace == 1) ? vec3(1.0) : textureLod(tEnvMap, N, IBL_DIFFUSE_LOD).rgb;
+  vec3 kD = (vec3(1.0) - F0) * (1.0 - uMetalness); // 能量守恒：金属无漫反射
+  // 与直接光漫反射同口径补 /PI（直接光在 main 为 kD*albedo/PI）。
+  // 盒式滤波 mip 取的是均匀平均 radiance 而非 cosine-weighted irradiance，
+  // 绝对亮度另由 uEnvIntensity 标定，二者归一到同一能量口径。
+  return irradiance * kD * uBaseColor / PI;
 }
 
 vec3 iblSpecular(vec3 N, vec3 V, vec3 F0, float roughness) {
-  return vec3(0.0); // TODO(p1 · 你来写)
+  if (uHasEnv == 0) return vec3(0.0);
+  vec3 R = reflect(-V, N); // reflect 用于计算入射向量的镜面反射方向
+
+  // 1. 采样预过滤环境贴图 (Part 1)
+  // roughness → LOD：越粗糙越取更模糊的 mip；这是调参旋钮
+  float lod = clamp(roughness * ENV_MAX_LOD, 0.0, ENV_MAX_LOD);
+  vec3 prefiltered = (uFurnace == 1) ? vec3(1.0) : textureLod(tEnvMap, R, lod).rgb; // 白炉：环境视为纯白
+
+  // 2. DFG
+  vec3 dfg = envBRDFApprox(F0, max(dot(N, V), 1e-4), roughness);
+
+  return prefiltered * dfg;
 }
 
 void main() {

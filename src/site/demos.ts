@@ -72,7 +72,7 @@ export const DEMOS: DemoMeta[] = [
     ],
     limitations: [
       '自写 BRDF 的光照仍是硬编码单主光 + 占位环境项，多光源与 IBL 待 p1-pbr-ibl。',
-      'MSAA 在 MRT 下暂关闭（samples: 0），边缘锯齿依赖后续 MSAA / TAA 方案。',
+      'MSAA 在 MRT 下已开启 4×（BeautyPass samples: 4），三附件 resolve 正常；深度在 SSR 阶段仍需目标设备实测。',
       'MRT 需要 EXT_color_buffer_float；不支持的设备降级为单目标，G-buffer 选项自动隐藏。',
       '场景为程序化占位，真实资产待 p0-assets 补齐。',
       'GPU 计时仅在支持 EXT_disjoint_timer_query_webgl2 的设备显示，软件渲染器下不可用。',
@@ -117,16 +117,16 @@ export const DEMOS: DemoMeta[] = [
     perf: 'realtime',
     metric: '白炉能量守恒 · split-sum IBL',
     effort: '3–4 天',
-    status: 'wip',
+    status: 'done',
     algorithm: [
       'GGX 法线分布 + Smith 几何遮蔽 + Schlick 菲涅耳（前向直接光，已实现）。',
       '直接光参数从场景真实灯光同步（主平行光 + 环境兜底），替代硬编码常量。',
-      'IBL split-sum：预滤波环境（CubeCamera + mipmap 近似）+ DFG 近似 + 漫反射辐照度；算法段由本人实现（gbuffer.frag 的 iblDiffuse / iblSpecular）。',
+      'IBL split-sum：预滤波环境（CubeCamera + mipmap 近似）+ DFG 近似 + 漫反射辐照度；算法段已实现（gbuffer.frag 的 iblDiffuse / iblSpecular）。',
       '白炉测试：环境视为纯白、关闭直接光，验证半球积分能量守恒。',
     ],
     formulas: ['fr = F·D·G / (4(n·l)(n·v))', 'D_GGX = α² / (π((n·h)²(α²−1)+1)²)'],
     limitations: [
-      'IBL 算法段（iblDiffuse / iblSpecular）尚未实现：环境光开关暂不产生能量贡献，白炉模式会得到黑屏（占位状态，避免误导已默认关闭）。',
+      'IBL 算法段已实现（gbuffer.frag 的 iblDiffuse / iblSpecular）：split-sum 用 CubeCamera box-filter mip 近似预滤波环境 + Karis EnvBRDFApprox；漫反射辐照度用最高 LOD 采样近似，与直接光同口径补 1/π。',
       '环境贴图用 CubeCamera 的 box-filter mip 链近似，非 GGX 重要性采样预滤波；split-sum 对掠射角近似较差。',
       '单次散射 GGX 在强粗糙度下损失多次散射能量，白炉测试会偏暗。',
       '当前为单主平行光；多光源与剔除属 p1-light-ssr 的范围。',
