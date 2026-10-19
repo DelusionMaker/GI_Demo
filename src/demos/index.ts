@@ -1,4 +1,4 @@
-import { helloCubeDemo } from './hello-cube'
+import { helloCubeDemo, pbrIblDemo } from './hello-cube'
 import type { DemoModule } from './types'
 
 /**
@@ -9,4 +9,8 @@ import type { DemoModule } from './types'
  */
 export const DEMO_MODULES: Record<string, DemoModule> = {
   'hello-cube': helloCubeDemo,
+  // HDR / PBR-IBL 是同一套自建链的不同展示切面：复用 Stage，
+  // 避免站点上标着 done 的页面却落到「规划中」占位。
+  hdr: helloCubeDemo,
+  'pbr-ibl': pbrIblDemo,
 }

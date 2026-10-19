@@ -9,6 +9,139 @@
 
 ---
 
+## 2026-10-19 · p0-assets 步骤 3：天空材质、白炉读数、演示模式与作品集文档
+
+### 目标
+
+把户外场景从「黑底 IBL 测试台」补成可展示的作品集画面，同时把白炉从定性开关变成可读、可测的数字；再加一个默认干净的演示模式，并为 README / case study 准备素材。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/shaders/sky.frag` | 新增 | 天空球片元着色器：1K equirect HDR 直接采样，写满 gAlbedo / gNormal / gMRAO |
+| `src/core/postfx/materials/SkyMaterial.ts` | 新增 | BackSide、depthTest/Write=false 的天空材质；复用 gbuffer.vert |
+| `src/core/postfx/materials/gbufferShared.ts` | 改造 | 新增 `uSkyMap` / `uHasSkyMap`；IBL 与天空共用 `uEnvIntensity` |
+| `src/core/postfx/GBufferEnvironment.tsx` | 改造 | HDR 加载后保留 equirect 纹理给天空；无浮点 RT 时 IBL 回退 RoomEnvironment 但天空仍用 HDR |
+| `src/core/scene/OutdoorScene.tsx` | 改造 | 天空球（renderOrder=-1）、地面 60→1000、4 个机位 |
+| `src/core/camera/CameraRig.tsx` | 改造 | 飞入完成条件同时检查相机位置与 controls.target（见踩坑 1） |
+| `src/core/postfx/passes/LuminancePass.ts` | 改造 | 回读全帧几何均值与中心亮度 |
+| `src/core/postfx/hdrStore.ts` / `HDRDriver.tsx` | 改造 | 白炉读数、测光回读计数回传到 HUD |
+| `src/demos/hello-cube/index.tsx` | 改造 | 演示模式、白炉读数、户外 hero / IBL 球列机位、环境强度默认 0.7 |
+| `src/demos/index.ts` | 改造 | hdr / pbr-ibl 页面复用 hello-cube Stage（见踩坑 4） |
+| `src/styles/global.css` | 改造 | 白炉读数样式 |
+| `e2e/furnace.spec.ts` / `e2e/presentation.spec.ts` | 新增 | 白炉真实回读校验；演示模式 / 技术模式切换；pbr-ibl 默认入口 |
+| `README.md` / `CASE_STUDY.md` / `docs/images/*` | 新增 | 作品集入口、case study 草稿、截图副本 |
+| `src/site/demos.ts` / `TODO.md` | 改造 | 天空、白炉读数、演示模式与实测数字 |
+
+### 关键设计决策
+
+1. **天空球写满 3 个 MRT 附件，不用 `scene.background`**：3 附件 BeautyPass 下，three 的 background pass 只写 1 个 output，容易被驱动丢弃。天空球 `renderOrder=-1`、`depthTest/Write=false`，先画天空，场景物体随后覆盖；采样 1K equirect HDR，比 256² IBL cube 清晰。
+2. **天空与 IBL 解耦**：`uSkyMap` / `uHasSkyMap` 独立于 `uHasEnv`。关 IBL 时天空仍可见，A/B 只改变光照；天空和 IBL 共用 `uEnvIntensity`（默认 0.7，白炉强制 1）。
+3. **地面扩大**：60×60 的地面在 hero 机位下会露出硬边；改 1000×1000，让边缘落到相机 far 之外，地平线由天空 / 地面自然相接。
+4. **白炉补 π**：高 LOD 盒式 mip 是平均 radiance，不是 cosine-weighted irradiance；对常数环境 irradiance = π × radiance。补 π 后与漫反射 BRDF 的 1/π 抵消，白炉中心亮度从约 0.31 回到 0.978。同时强制 albedo=1 / metalness=0，并按中心区域读数（全帧均值会被黑背景拉低）。
+5. **演示模式默认开**：只留场景 / IBL / 环境强度 / 白炉读数；技术模式通过右上角按钮恢复完整 HDR / 性能 / G-buffer 面板。现有技术测试显式加 `presentation=0`，新增 `presentation.spec.ts` 守住切换。
+6. **作品集页面必须真的能打开**：`DEMO_MODULES` 之前只登记了 `hello-cube`，站点上 `hdr` / `pbr-ibl` 虽标 done，实际落到「规划中」占位。现在三个入口复用同一个 Stage，pbr-ibl 页面能直接跑户外 / 白炉。
+
+### 踩坑与修复
+
+1. **相机 target 永远不收敛**：`CameraRig` 只看 `camera.position` 是否到达预设就结束飞入；而 `CanvasRoot` 的初始机位恰好等于 `presets[0]`，第一帧位置已满足，`controls.target` 还停在 `[0,0,0]` 就不再插值。表现是模型顶部被切、地平线位置不对。修复为同时检查相机位置和 target 距离；这也是新 hero 机位能正确构图的前提。
+2. **保留 equirect 纹理的生命周期**：之前 cube 捕获后立刻 `texture.dispose()`；现在天空要用原图，必须保留到 cleanup。`GBufferEnvironment` 的 `hdr` 变量负责释放；无浮点 RT 分支也保留 HDR（2D 天空采样不需要浮点 RT），只让 IBL 回退 RoomEnvironment。
+3. **白炉 ±2% 没完全达到**：实测 0.978（-2.20%），略超目标；原因是单次散射 GGX 在粗糙端损失多次散射。HUD 按 ±2% 显示黄/绿，自动化测试用 5% 做回归守护，文档如实写 -2.2%，不把目标写成已达标。
+4. **站点 `done` 页面实际是占位**：`DEMO_MODULES` 只登记 `hello-cube`，`/d/hdr` / `/d/pbr-ibl` 会渲染 PlannedStage。已在 `src/demos/index.ts` 把两个入口映射到同一个 Stage；这是作品集必须修的展示层问题。
+5. **线性输出下的天空过曝**：1K 纯天空 HDR 亮度较高，默认 linear 会把天空推到接近白色；`envIntensity` 默认降到 0.7，hero URL 建议 `tm=aces`。HUD 的曲线下拉仍可切 ACES / AgX。
+
+### 验证
+
+- `npm run typecheck`：通过。
+- `npm run smoke`：**11 passed**。
+  - 白炉中心亮度 **0.978**，偏差 **-2.20%**；测试等待 luminance 真实回读（`data-samples > 0`）。
+  - 户外 IBL 关 / 开：亮度均值 **123.76 / 134.78**；A/B 平均差 **12.166**，> 8 像素 **≈59.03%**。
+  - 自建链 vs 直出（Cornell）：线性域平均差 **≈0.25**，> 8 像素 **≈0.25%**。
+  - 演示模式 / 技术模式切换、pbr-ibl 默认户外 + IBL + ACES 两个用例通过；G-buffer 三层、Bloom、URL 回填、探针调试均无回归。
+- `npm run build`：通过（658 modules；1,346.45 kB / gzip 388.13 kB）。
+- 截图：`e2e/screenshots/10-outdoor-env-off.png` / `11-outdoor-env-on.png`；整理稿在 `docs/images/`。
+
+### 遗留 / 下一步
+
+1. **真实 GPU 性能数据**：README / case study 的性能表目前是待填；CI 的 SwiftShader 不能作为作品集数据。需要在真实 GPU 上采 IBL 开/关、Bloom 开/关的逐 pass GPU ms。
+2. **白炉 ±2% 收紧**：当前 -2.2%，可尝试把中心区域 roughness 固定 / 用多次散射补偿，或把目标改成 ±3% 并如实写。
+3. **Sponza 室内**：normal / metallicRoughness / emissive / 透明混合 + KTX2；接完后再把「室内」放回演示下拉。
+4. **阴影 / SSR**：按 p1-shadow / p1-light-ssr 主线推进；当前 Cornell 顶灯仍是几何占位。
+5. **hero 画面继续打磨**：地面仍是纯色、无雾；可以加程序化地面细节或雾，但不要引入与 MRT 不兼容的 background pass。
+
+---
+
+## 2026-10-19 · p0-assets 步骤 2：户外 Poly Haven HDRI + LittlestTokyo IBL 验证
+
+### 目标
+
+把 `GBufferEnvironment` 从「只捕获 RoomEnvironment」扩展到「加载真实 equirectangular HDR」，并用一个户外场景验证 split-sum IBL：Poly Haven CC0 HDRI 提供环境光，LittlestTokyo（CC BY 4.0，带 baseColor 贴图 / 蒙皮 / Draco）作为真实资产对照，前景放一排金属 / 介电球做粗糙度扫掠。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `public/hdr/kloppenheim_06_puresky_1k.hdr` | 新增资产 | Poly Haven CC0，1K equirect HDR（1.17 MB） |
+| `public/assets/littlest-tokyo.glb` | 新增资产 | three.js 官方示例，Glen Fox，CC BY 4.0（4.13 MB，Draco 压缩，15 材质 / 4 贴图 / 1 skin） |
+| `public/draco/*` | 新增资产 | 从 three `examples/jsm/libs/draco` 复制的 decoder / wasm / wrapper |
+| `public/assets/CREDITS.md` | 新增 | 资产来源、作者、许可与用途 |
+| `src/core/postfx/GBufferEnvironment.tsx` | 改造 | 新增 HDR 分支：`RGBELoader` → `WebGLCubeRenderTarget.fromEquirectangularTexture`；强制 mipmap / 过滤；失败或浮点 RT 不可用时回退 RoomEnvironment |
+| `src/core/postfx/materials/GBufferMaterial.ts` | 改造 | 增加 `map` / `alphaTest` / `side` / UV 变换 uniform |
+| `src/core/postfx/shaders/gbuffer.frag` | 改造 | baseColor 贴图采样 + alphaTest；局部 albedo / metalness / roughness；`iblDiffuse` 改用贴图 albedo；**`tEnvMap` 改名 `uEnvMap`**（见踩坑 1） |
+| `src/core/scene/GltfScene.tsx` | 新增 | `useGLTF(url, '/draco/')` + `SkeletonUtils.clone` + traverse 替换 `GBufferMaterial` + 包围盒缩放着地 |
+| `src/core/scene/OutdoorScene.tsx` | 新增 | 地面 + 5 个粗糙度扫掠球 + 2 个建筑体块 + LittlestTokyo |
+| `src/core/scene/SceneAsset.tsx` | 改造 | `outdoor` 路由到 `OutdoorScene`；通用 GLTF 路径改用 `GltfScene` |
+| `src/core/scene/scenes.ts` | 改造 | `SceneEntry` 增加 `envUrl`；outdoor 填 HDR / GLB 路径 |
+| `src/demos/hello-cube/index.tsx` | 改造 | 户外机位 / 主光 / 探针位置；`GBufferEnvironment` 传 `envUrl`；`uHasEnv` 等 HDR 就绪后再开；更新 IBL / 白炉提示 |
+| `src/site/demos.ts` | 改造 | 补户外 IBL 算法、许可与如实 limitations |
+| `TODO.md` / `DEVLOG.md` / `public/assets/CREDITS.md` | 文档 | 进度、踩坑、资产许可 |
+| `e2e/outdoor.spec.ts` | 新增 | 校验 HDR / GLB / Draco 均 200、无 GL 错误、IBL 开关产生可见变化 |
+
+### 关键设计决策
+
+1. **HDRI 只作为 IBL，不铺成场景背景**：当前 BeautyPass 是 3 附件 MRT，three 的 `scene.background` 走内建 background pass，只写 1 个 output；在 MRT 下容易触发「missing fragment shader outputs」并被丢弃。保持黑色背景，让金属球直接反射天空，既能看到 HDRI，又不引入额外的天空 pass。代价是户外没有可见天空（已写进 limitations）。
+2. **1K HDR → 256² HalfFloat cube，强制 mip 链**：`fromEquirectangularTexture` 会把源纹理的 `type / colorSpace / generateMipmaps / minFilter` 复制到 cube RT。`RGBELoader` 默认 `minFilter=LinearFilter`、不生成 mip，若不在捕获前改掉，`iblSpecular` 的 roughness→LOD 会退化到 L0，粗糙表面会像镜子。代码里先设 `generateMipmaps=true`、`minFilter=LinearMipmapLinearFilter`，再调 `fromEquirectangularTexture`。
+3. **材质替换保留 baseColor 贴图，但仍是「不透明」管线**：LittlestTokyo 的 15 个材质共享 4 张贴图，大部分是同一张 baseColor palette；GLTFLoader 的 `meshStandardMaterial` 在 MRT 下只写 1 个 output，必须 traverse 换成 `GBufferMaterial`。本步只接 baseColor / alphaTest / side；normal / metallicRoughness / emissive 与 BLEND 混合留给 Sponza 材质步。BLEND 玻璃用 `alphaTest=0.1` 丢弃全透明像素，其余按不透明渲染。
+4. **蒙皮必须用 `SkeletonUtils.clone`**：模型有 1 个 skin 和 1 个动画。`Object3D.clone()` 会让骨骼引用指回原场景，蒙皮网格错位；`SkeletonUtils.clone()` 才能复制 Skeleton / Bone 关系。动画本步不播放（bind pose 足够做静态 IBL 对照），后续要播时可加 `AnimationMixer`。
+5. **户外布局与相机**：LittlestTokyo 按包围盒最长边缩放到 11 单位，底面中心落在 `[0, 0.01, -8]`；前景 5 球在 `z=3` 做金属/介电 × 粗糙度扫掠，2 个建筑体块在 `z≈1` 框住画面。主光降到 1.6，避免压过 HDRI；相机目标点抬到 y=4.6、机位 `[10, 6.8, 15.5]`，让 ~11 单位高的模型完整入画（第一版 `[9,5.5,13]` 会切掉屋顶）。
+6. **`uHasEnv` 等环境就绪**：HDR 是异步加载的，若在 `uEnvMap` 还是 null 时打开 `uHasEnv`，`samplerCube` 会绑到空纹理。`GBufferParamSync` 改为 `(env || furnace) && uEnvMap !== null`，HDR 就绪后自动亮起。
+
+### 踩坑与修复
+
+1. **shader 和共享 uniform 名字不一致，环境贴图从头到尾没绑定**（本次最值得记的一条）
+   - 现象：户外场景全黑；控制台重复 `GL_INVALID_OPERATION: glDrawElements: Two textures of different types use the same sampler location.`；HUD 仍显示 78 draw calls / 17 万三角形，说明场景在提交，但被驱动丢弃。
+   - 调试：临时打印 program 的 sampler 单元，发现 `uBaseColorMap=unit0`、`uEnvMap=unit0`。3 附件 MRT 的 program 有 19 个 active uniform，材质里却只有 `uEnvMap`，shader 声明的是 `tEnvMap`。
+   - 根因：`gbuffer.frag` 声明 `uniform samplerCube tEnvMap`，而 `gbufferShared` 里的 uniform key 是 `uEnvMap`。three 的 `WebGLUniforms.upload` 只上传**材质 uniforms 对象里存在的名字**，`tEnvMap` 永远拿不到值，cube sampler 默认停在 unit 0；新增的 `uBaseColorMap` 也被分到 unit 0，2D / cube 同单元 → 整次 draw 被丢弃。之前没有 baseColor 贴图时，这个错误不会显形，IBL 其实一直在采样未绑定的空 cube（静默黑），只是 Cornell 的 `env` 默认关闭，没被发现。
+   - 修复：shader 改名 `tEnvMap` → `uEnvMap`，与 `gbufferShared.uEnvMap` 对齐；确认 `uBaseColorMap=unit0`、`uEnvMap=unit1`。修复后 IBL 开关产生明显变化（亮度均值 44.33 → 53.20）。
+   - 教训：共享 uniform 对象的 key 必须和 shader 声明**逐字符一致**；three 对缺失的 uniform 是静默跳过，不会报错。纹理类 uniform 的错配还会以 GL sampler 冲突的形式出现，表现为「场景黑但 draw call 正常」。
+2. **Draco 解码器必须显式给路径**：`useGLTF(url, true)` 会创建 `DRACOLoader`，但默认 decoder path 指向 three 的 CDN/包内路径，Vite 下不可用。改为 `useGLTF(url, '/draco/')`，并把 three 自带的 decoder 复制到 `public/draco/`。否则控制台是 `THREE.GLTFLoader: No DRACOLoader instance provided`，模型不出现。
+3. **`fromEquirectangularTexture` 的 mipmap 继承**：见设计决策 2。若不改源纹理的 filter / generateMipmaps，cube 贴图没有 mip 链，`textureLod` 的 roughness 预滤波会退化；这是「IBL 看起来像镜面」的常见原因。
+4. **MRT 下 BLEND 不能直接透传**：`GBufferMaterial` 写 3 个附件，开 `transparent` 会让 gNormal / gMRAO 也参与混合，语义错误。本步用 alphaTest 近似，玻璃按不透明渲染；这是明确的取舍，不是漏做。
+5. **相机取景按包围盒手调**：模型最高处 ~11 单位，第一版相机 target y=3.2 把屋顶切掉；把 target 抬到 4.6 并后退到 z=15.5 才完整。后续应做「按包围盒自动取景」，避免每接一个资产手调。
+
+### 验证
+
+- `npm run typecheck`：通过。
+- `npx playwright test e2e/outdoor.spec.ts`：**1 passed**。
+  - HDR / GLB / Draco 响应均 200；`HDRI 加载失败` warning 未出现（确认走的是 HDR 分支，不是 RoomEnvironment 回退）。
+  - IBL 关：亮度均值 **44.33**、标准差 **33.03**；IBL 开：**53.20 / 38.06**。
+  - IBL A/B：平均差 **9.920**、最大差 **164**、差异 > 8 的像素 **77.707%**。
+  - 截图：`e2e/screenshots/10-outdoor-env-off.png` / `11-outdoor-env-on.png`。
+- `npm run smoke`：**8 passed**（既有 7 个 + 户外 1 个；Cornell A/B 仍为 0.211 / 0.218%，G-buffer 三层与 Bloom 用例无回归）。
+- `npm run build`：通过（656 modules；1,338.96 kB / gzip 385.42 kB，既有体积警告）。
+
+### 遗留 / 下一步
+
+1. **室内 Sponza**：先给 `GBufferMaterial` 补 normal / metallicRoughness / emissive 贴图、tangent 与透明混合，再接 Khronos Sponza（CC BY 3.0），贴图压到 1K + KTX2，控制 ~15–20 MB 预算。
+2. **户外天空背景**：当前是黑色。若要真实天空，需要给 MRT 单独写一个「天空球 / 全屏天空」材质（写满 3 个 output），不能直接用 three 的 `scene.background`。
+3. **HDR 质量**：`fromEquirectangularTexture` + box-filter mip 只是近似；可升级为 GGX 重要性采样预滤波，或换 2K HDR（体积 / 带宽换质量）。
+4. **动画**：LittlestTokyo 目前是 bind pose；`SkeletonUtils.clone` 已就绪，加 `AnimationMixer` 即可播放。
+5. **性能数据**：户外约 17 万三角形，比 Cornell 的 8 mesh 更有说服力；逐 pass GPU ms 仍未单独记录，等 `p1-shadow` 接入后一起采。
+6. **自动取景**：用包围盒 + fov 算相机距离 / target，替代硬编码机位。
+
+---
+
 ## 2026-10-19 · p0-assets 步骤 1：Cornell Box 程序化参考场景 + 相机/灯光适配
 
 ### 目标
@@ -68,7 +201,7 @@
 
 ## 2026-10-18 · p1-pbr-ibl 框架：真实灯光接入 + 环境贴图/白炉骨架（IBL 算法段留给你）
 
-> **2026-10-19 状态更新**：本条目末尾「遗留 / 下一步」的第 1 项（`iblDiffuse` / `iblSpecular`）已由用户完成并合入 `gbuffer.frag`，白炉分支也已接通；第 2–4 项为可选收口。下方正文保留 2026-10-18 当天的实施记录，不再按「待写」理解。
+> **2026-10-19 状态更新**：本条目末尾「遗留 / 下一步」的第 1 项（`iblDiffuse` / `iblSpecular`）已由用户完成并合入 `gbuffer.frag`，白炉分支也已接通；第 2–4 项为可选收口。下方正文保留 2026-10-18 当天的实施记录，不再按「待写」理解。另：2026-10-19 户外接入时发现 shader 的 `tEnvMap` 与共享 uniform `uEnvMap` 命名不一致，环境贴图此前实际未绑定；已在「p0-assets 步骤 2」修复，IBL 现在才真正生效（详见该条踩坑 1）。
 
 ### 目标
 

@@ -97,6 +97,8 @@ export function HDRDriver() {
         pipeline.luminance.histogram,
         pipeline.luminance.autoEV,
         pipeline.luminance.autoExposureActive,
+        pipeline.luminance.averageLuminance,
+        pipeline.luminance.centerLuminance,
       )
     }
   }, 1)

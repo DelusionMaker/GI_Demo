@@ -23,7 +23,14 @@ export const gbufferShared = {
 
   /** 环境贴图：CubeCamera 捕获的立方体贴图（带 mipmap），世界空间方向直接采样 */
   uEnvMap: { value: null as THREE.Texture | null },
-  /** 环境强度倍率（demo 滑杆） */
+  /**
+   * 天空背景：原始 equirect HDR（2D），只给 `SkyMaterial` 用。
+   * IBL 仍走 256² cube + mip；天空保留 1K 原图，避免背景被 cube 分辨率拖糊。
+   */
+  uSkyMap: { value: null as THREE.Texture | null },
+  /** 1 = equirect HDR 就绪（天空可见；与 IBL 开关解耦） */
+  uHasSkyMap: { value: 0 },
+  /** 环境强度倍率（demo 滑杆；同时作用于 IBL 与天空亮度） */
   uEnvIntensity: { value: 1 },
   /** 1 = 环境贴图就绪且开关打开（此时走 IBL 算法段；0 = 占位环境项兜底） */
   uHasEnv: { value: 0 },

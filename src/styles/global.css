@@ -773,6 +773,45 @@ code {
   padding: 4px 6px;
 }
 
+/* ---------- 白炉读数 ---------- */
+
+.furnace-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.furnace-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.furnace-key {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.furnace-val {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.furnace-note {
+  margin-top: 3px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
 /* ---------- 性能面板 ---------- */
 
 .perf-panel {

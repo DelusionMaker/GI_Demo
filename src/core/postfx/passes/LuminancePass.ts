@@ -53,6 +53,10 @@ export class LuminancePass implements Pass {
   histogram: number[] = new Array(HIST_BINS).fill(0)
   /** 当前是否处于自动曝光模式（仅供展示） */
   autoExposureActive = false
+  /** 最近一次回读的全帧几何平均亮度（HDR 线性域，未乘曝光） */
+  averageLuminance = 1
+  /** 画面中心 1/64 区域的平均亮度，供白炉读数使用 */
+  centerLuminance = 1
 
   private readonly quad: FullscreenQuad
   private readonly rt: THREE.WebGLRenderTarget
@@ -143,6 +147,14 @@ export class LuminancePass implements Pass {
 
     const avgLog = sumLog / count
     const avgLum = Math.pow(2, avgLog)
+    this.averageLuminance = avgLum
+
+    // 中心区域读数：白炉测试关心画面中心的白面是否回到 1.0，
+    // 全帧均值会被黑色背景 / 暗部拉低，不适合作为 ±% 判据。
+    const centerIndex = (Math.floor(LUM_H / 2) * LUM_W + Math.floor(LUM_W / 2)) * 4
+    const centerN = this.pixels[centerIndex] / 255
+    this.centerLuminance = Math.pow(2, LOG_MIN + centerN * span)
+
     const targetEV = Math.max(-EV_CLAMP, Math.min(EV_CLAMP, Math.log2(KEY_VALUE / avgLum)))
 
     if (autoExposure) {

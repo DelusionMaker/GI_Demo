@@ -29,6 +29,12 @@ export class HdrStore {
   autoEV = 0
   /** 当前是否处于自动曝光模式 */
   autoExposureActive = false
+  /** 最近一次回读的全帧平均亮度（HDR 线性域） */
+  averageLuminance = 1
+  /** 画面中心区域亮度，供白炉读数使用 */
+  centerLuminance = 1
+  /** 测光回读累计次数：测试用来确认读数不是初始值 */
+  meterSamples = 0
 
   /** 当前存活的管线；刻意非 observable（只是转发目标，不参与渲染订阅） */
   private active: Pipeline | null = null
@@ -44,6 +50,9 @@ export class HdrStore {
       histogram: observable,
       autoEV: observable,
       autoExposureActive: observable,
+      averageLuminance: observable,
+      centerLuminance: observable,
+      meterSamples: observable,
       register: actionBound,
       unregister: actionBound,
       pushStats: actionBound,
@@ -74,11 +83,20 @@ export class HdrStore {
     this.totalMs = pipeline.stats.totalMs
   }
 
-  /** 把 luminance 测光 pass 的直方图与自动曝光状态回传到 HUD（5Hz） */
-  pushHistogram(histogram: number[], autoEV: number, active: boolean): void {
+  /** 把 luminance 测光 pass 的直方图、曝光状态与白炉读数回传到 HUD（5Hz） */
+  pushHistogram(
+    histogram: number[],
+    autoEV: number,
+    active: boolean,
+    averageLuminance: number,
+    centerLuminance: number,
+  ): void {
     this.histogram = histogram
     this.autoEV = autoEV
     this.autoExposureActive = active
+    this.averageLuminance = averageLuminance
+    this.centerLuminance = centerLuminance
+    this.meterSamples += 1
   }
 }
 

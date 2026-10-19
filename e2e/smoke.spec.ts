@@ -143,7 +143,7 @@ async function setRangeValue(locator: Locator, value: number): Promise<void> {
 test.describe('p0-hdr · HDR 链路冒烟', () => {
   test.beforeEach(async ({ page }) => {
     // speed=0 关闭探针自转，保证两次截图可确定性对比
-    await page.goto('/d/hello-cube?speed=0')
+    await page.goto('/d/hello-cube?speed=0&presentation=0')
     await expect(page.locator('canvas').first()).toBeVisible()
     // 等相机飞向预设视角收敛 + 若干帧稳定
     await page.waitForTimeout(1500)
@@ -333,7 +333,7 @@ test.describe('p0-hdr · HDR 链路冒烟', () => {
 
     // 强制开启 bloom 并压低阈值 / 提高强度，确保场景里有足够亮像素被提取，
     // 从而 bloom 必然产生可见变化（否则 A/B 无法证明 pass 真的跑了）。
-    await page.goto('/d/hello-cube?speed=0&bloom=1&bloomThreshold=0.3&bloomIntensity=2')
+    await page.goto('/d/hello-cube?speed=0&presentation=0&bloom=1&bloomThreshold=0.3&bloomIntensity=2')
     await expect(page.locator('canvas').first()).toBeVisible()
     await page.waitForTimeout(1500)
 
@@ -343,7 +343,7 @@ test.describe('p0-hdr · HDR 链路冒烟', () => {
     expect(statsOn.stddev, 'bloom 开启后画面异常（疑似空白/黑屏）').toBeGreaterThan(5)
 
     // 关掉 bloom（同阈值，排除阈值本身影响），做像素级 A/B
-    await page.goto('/d/hello-cube?speed=0&bloom=0&bloomThreshold=0.3')
+    await page.goto('/d/hello-cube?speed=0&presentation=0&bloom=0&bloomThreshold=0.3')
     await page.waitForTimeout(1200)
     const bloomOff = await shootClean(page, '08-bloom-off')
 
@@ -398,7 +398,7 @@ test.describe('p0-hdr · HDR 链路冒烟', () => {
     })
 
     for (const view of ['normals', 'wireframe']) {
-      await page.goto(`/d/hello-cube?speed=0&debug=${view}`)
+      await page.goto(`/d/hello-cube?speed=0&presentation=0&debug=${view}`)
       await expect(page.locator('canvas').first()).toBeVisible()
       await page.waitForTimeout(800)
     }

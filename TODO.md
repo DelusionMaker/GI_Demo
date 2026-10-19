@@ -62,12 +62,13 @@ npm run build      # 生产构建
 - [x] **p0-gbuffer-hud** G-buffer MRT + 性能 HUD　**✅ S1–S3 完成（2026-10-18，见 DEVLOG）**：GPU 计时 / MRT 真实启用 / 自写前向 BRDF / 三层调试视图
 - [~] **p0-assets** 准备 3 个场景资产（Cornell box / 室内 / 户外）
   - [x] **Cornell Box**（2026-10-19）：按 Cornell 官方测量数据程序化搭建（552.8 × 548.8 × 559.2，1:100；短块 165³ / 高块 165 × 330 × 165），见 `src/core/scene/CornellBox.tsx`
-  - [ ] **室内**：Sponza（Khronos glTF，CC BY 3.0）——需先给 `GBufferMaterial` 加 albedo / roughness / metalness / normal 贴图支持
-  - [ ] **户外**：Poly Haven HDRI（CC0）+ LittlestTokyo / 简易体块；`GBufferEnvironment` 增加 HDR 加载分支
+  - [x] **户外**（2026-10-19）：Poly Haven CC0 HDRI `kloppenheim_06_puresky_1k` + LittlestTokyo（CC BY 4.0，Draco）+ 5 球 / 2 体块；`GBufferEnvironment` 增加 HDR → 256² HalfFloat cube（mip 链）分支，`GltfScene` traverse 替换 GBufferMaterial（baseColor / alphaTest / side），相机按包围盒归一化；天空球 / 4 机位 / 演示模式已接入
+  - [x] **资产许可**：`public/assets/CREDITS.md`（Poly Haven CC0 / LittlestTokyo CC BY 4.0 / Draco Apache 2.0）
+  - [ ] **室内**：Sponza（Khronos glTF，CC BY 3.0）——baseColor 贴图已接；仍需补 roughness / metalness / normal / emissive 贴图与透明混合，并处理 KTX2 / Draco 压缩
 
 ### 阶段 1 · 直接光照（2–3 周）
 
-- [x] **p1-pbr-ibl** PBR（Cook-Torrance / GGX + Smith + Schlick）+ IBL（split-sum）+ 白炉测试　**核心完成（2026-10-19 文档对齐）**：`gbuffer.frag` 的 `iblDiffuse` / `iblSpecular` 已实现（roughness→LOD + Karis EnvBRDFApprox + 白炉分支）；真实灯光 / CubeCamera 环境贴图 / 白炉开关已接通。可选收口：`env` 默认切 `true`、白炉 ±2% 定量数据、GGX 重要性采样预滤波（见 DEVLOG 2026-10-18「遗留」）
+- [x] **p1-pbr-ibl** PBR（Cook-Torrance / GGX + Smith + Schlick）+ IBL（split-sum）+ 白炉测试　**核心完成（2026-10-19）**：`gbuffer.frag` 的 `iblDiffuse` / `iblSpecular` 已实现（roughness→LOD + Karis EnvBRDFApprox + 白炉分支）；真实灯光 / CubeCamera 环境贴图 / 白炉开关已接通。2026-10-19 修复了 `tEnvMap` / `uEnvMap` 命名不一致（环境贴图才真正绑定）与漫反射 π 归一化；白炉 HUD 读数实测 **0.978 / -2.2%**，Playwright 已加回归（目标 ±2%，略超，见 DEVLOG）。可选收口：`env` 默认切 `true`、GGX 重要性采样预滤波、±2% 收紧
 - [ ] **p1-shadow** 阴影全家桶（SM / PCF / PCSS / CSM / VSM + 三种 bias 补偿）
 - [ ] **p1-light-ssr** 多光源与剔除（Forward / Deferred / Clustered 三档）+ SSR
 

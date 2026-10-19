@@ -1,123 +1,123 @@
-# 光照与全局光照 · Web 端技术作品集
+# GI Portfolio · WebGL2 实时 PBR / IBL 实验
 
-以「光照 / GI」为单一主题的深度作品集，从渲染方程出发，逐层做到烘焙 GI 与实时 GI。
-规划与技术决策见 [`TODO.md`](./TODO.md)，原始规划文档见 `ref_file/`。
+![户外 HDRI IBL](docs/images/outdoor-ibl-on.png)
 
-## 技术栈
+用 WebGL2 / three.js 自建 pass 链的实时渲染作品集。当前完成 **三附件 G-buffer MRT + 自写 Cook-Torrance 直接光 + split-sum IBL + HDR 后处理**，用 Cornell Box 做正确性参考、用 Poly Haven HDRI + LittlestTokyo 做真实资产验证。
 
-R3F（@react-three/fiber）+ Vite + three.js + React + TypeScript + MobX。
-混合实现路线：three.js 管底座与资源，光照算法全部自写 shader。
-状态管理统一走 MobX，约定见下方「状态管理」一节。
+> **状态边界**：当前是「直接光 + IBL」，不是完整 GI。阴影、SSR、SSGI、Sponza 室内场景在 roadmap 中，站点会明确标注；不把规划写成已完成。
 
-## 命令
+## 演示入口
+
+默认 `/d/hello-cube` 会进入 **演示模式**：只保留切场景、IBL 开关、白炉读数；右上角「技术模式」可展开完整 HDR / 性能 / G-buffer 面板。`/d/pbr-ibl` 默认就是 **户外 + IBL + ACES**，`/d/hello-cube` 保留 Cornell 参考场景；显式 query 可覆盖这两个默认值。
+
+| 入口 | 用途 |
+| --- | --- |
+| `/d/pbr-ibl?scene=outdoor&env=1&tm=aces` | 户外 hero：1K HDRI + LittlestTokyo + IBL |
+| `/d/pbr-ibl?scene=outdoor&env=0&presentation=1` | 同一机位的 IBL 关闭对照，打开后看金属球反射 |
+| `/d/pbr-ibl?scene=cornell&furnace=1&presentation=1` | 白炉：环境纯白、直接光关闭、albedo 强制 1 |
+| `/d/hello-cube?scene=outdoor&env=1&presentation=0` | 技术模式：G-buffer 调试 / HDR 链路 / 逐 pass 计时 |
+| `?tm=aces` | 把默认线性输出切到 ACES；户外 hero 建议加上 |
+
+截图中的机位：`城市`（hero）、`IBL 球列`（粗糙度扫掠特写）、`全景`、`低角度`，数字键 `1–4` 切换。
+
+## 已实现
+
+- **G-buffer MRT**：3 附件（gAlbedo / gNormal / gMRAO）+ 可采样深度；所有进入 beauty 的材质都写满 3 个 fragment output。
+- **直接光 PBR**：GGX 法线分布 + Smith 几何遮蔽 + Schlick 菲涅尔；从真实 three.js 灯光同步主光参数。
+- **IBL split-sum**：256² HalfFloat cube + mip 链；roughness→LOD、Karis EnvBRDFApprox；漫反射用高 LOD 平均 radiance × π 归一化。
+- **真实资产**：Poly Haven CC0 HDRI（1K equirect）+ LittlestTokyo（CC BY 4.0，Draco，约 171k 三角形）；`SkeletonUtils` 克隆蒙皮、traverse 替换 `GBufferMaterial`、baseColor / alphaTest / side。
+- **天空**：天空球直接采样 1K equirect HDR，显式写满 3 个 MRT 附件（不用 `scene.background`）。
+- **白炉读数**：HUD 显示中心亮度 / 全帧几何均值 / 相对 1.000 的偏差；Playwright 在真实测光回读后校验。
+- **演示模式**：默认隐藏调试 HUD；技术模式恢复 HDR 链路、性能面板、G-buffer 调试。
+- **HDR 后处理**：RGBA16F → 自动曝光 / 直方图 / ACES / AgX / Bloom；旁路 A/B 与逐 pass 计时。
+- **自动化验证**：11 个 Playwright 用例覆盖 HDR / G-buffer / 白炉 / 户外 IBL / 演示模式 / pbr-ibl 默认入口。
+
+## 渲染链路
+
+```text
+three.js 场景（GBufferMaterial / SkyMaterial）
+        │
+        ▼
+BeautyPass: 3× MRT（gAlbedo 最终着色 / gNormal / gMRAO）+ depth
+        │                         │
+        │                         └─ G-buffer 调试视图（原始附件）
+        ▼
+HDRPipeline: luminance（测光 / 白炉读数）→ bloom → tonemap-output
+        │
+        ▼
+canvas（sRGB）
+```
+
+自建链与场景直出共用同一批 GBufferMaterial；旁路路径用于像素级 A/B，证明后处理没有改变画面语义。
+
+## 验证数据
+
+| 项目 | 结果 |
+| --- | --- |
+| Playwright | **11 passed** |
+| 白炉中心亮度 | **0.978**（**-2.20%**，目标 ±2%，略超） |
+| 白炉全帧几何均值 | HUD 实时显示（含天空 / 暗部，不是 ±% 判据） |
+| 户外 IBL 关 / 开 亮度均值 | 123.76 / 134.78 |
+| 户外 IBL A/B | 平均差 **12.166**，差异 > 8 像素 **≈59.03%** |
+| 自建链 vs 直出（Cornell） | 线性域平均差 **≈0.25**，> 8 像素 **≈0.25%** |
+| 构建 | 658 modules；1,346.45 kB / gzip 388.13 kB |
+
+这些是**回归指标**，不是画质评分；白炉读数会随材质的 roughness 变化，HUD 会显示当前粗糙度。
+
+## 性能
+
+开发 / CI 的 headless Chromium 使用 SwiftShader，**不能作为作品集性能数据**。需要在真实 GPU 上运行技术模式，记录下表：
+
+| 场景 | 分辨率 / DPR | Draw calls | 三角形 | GPU 总 ms | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| Cornell | 待填 | 待填 | 待填 | 待填 | 8 个参考 mesh + 探针 |
+| 户外 | 待填 | 约 79 | 约 171k | 待填 | IBL 开 / 关各一组 |
+| Bloom / 后处理 | 待填 | — | — | 待填 | 开 / 关各一组 |
+
+采集方式：`?presentation=0` 打开技术模式，看右上角 PerfPanel 的 GPU 计时（需要 `EXT_disjoint_timer_query_webgl2`），每项至少记录 3 次取中位数。首屏资产约 6.5 MB（HDR 1.17 MB + GLB 4.13 MB + Draco 解码器）。
+
+## 资产与许可
+
+- HDRI：**Poly Haven** `kloppenheim_06_puresky_1k.hdr`，CC0，<https://polyhaven.com/hdris>
+- 模型：**LittlestTokyo**，Glen Fox / three.js，**CC BY 4.0**，<https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf>
+- Draco 解码器：Apache 2.0，来自 three.js
+- 完整来源与用途：`public/assets/CREDITS.md`
+
+LittlestTokyo 与 HDRI 是第三方资产，**不能声称原创**；公开部署时请保留署名与许可链接。代码本身目前未附 LICENSE，作为作品集展示使用。
+
+## 开发
 
 ```bash
 npm install
-npm run dev        # 本地开发，默认 http://localhost:5173
-npm run typecheck  # 类型检查
-npm run build      # 生产构建（tsc --noEmit && vite build）
-npm run preview    # 预览构建产物
-npm run smoke      # Playwright 冒烟 + 像素级 A/B 验证（首次先跑 npm run smoke:install）
+npm run dev        # 本地开发
+npm run typecheck
+npm run smoke      # Playwright；截图写到 e2e/screenshots（不入库）
+npm run build
 ```
 
-## 目录约定
+`public/` 需要包含 `hdr/`、`assets/`、`draco/`；`docs/images/` 是 README / case study 用的整理稿截图。
 
-```
-src/
-  core/                 # 共享基建，所有 demo 复用
-    capabilities.ts     # 运行时渲染能力 / 后端档位 store（MobX）
-    renderer/
-      createRenderer.ts # 后端唯一分叉点（当前 WebGL2；阶段 4 在此切 WebGPU）
-      CanvasRoot.tsx    # 统一 R3F Canvas 封装（DPR 上限、flat、挂载 PostFX）
-      PostFX.tsx        # 后处理插槽：渲染 children + HDRDriver
-    postfx/
-      HDRPipeline.ts    # 门面：选 RT 格式 / 组装链路 / 公开 API（无 React 依赖）
-      Pipeline.ts       # 通用多 pass 调度、RT 池化复用、调试截断、bypass
-      Pass.ts           # Pass / PassContext / PassTiming 类型契约
-      FullscreenQuad.ts # 全屏三角形 + 通用顶点着色器
-      passes/           # BeautyPass（链首，带 DepthTexture）/ TonemapOutputPass（链尾，手写 sRGB）
-      HDRDriver.tsx     # Pipeline ↔ R3F 唯一接触点（尺寸 / 帧驱动 / 开关同步 / 统计回传）
-      HDRPanel.tsx      # HUD 面板：RT 档位 / 旁路 / 调试视图
-      hdrStore.ts       # 链路 UI 侧状态（MobX，5Hz 采样）
-    camera/CameraRig.tsx # 预设视角 + 自动巡航 + 轨道操作
-    controls/            # ControlPanel 组件 + DemoStore（MobX，URL 状态序列化）
-    hud/Hud.tsx          # 四角插槽 HUD 容器
-    perf/
-      perfStats.ts      # 非响应式帧数据（画布内每帧写入，绝不能触发 React 更新）
-      perfStore.ts      # MobX store，把 perfStats 以 5Hz 采样成 observable
-      PerfProbe.tsx     # 画布内每帧采集
-      PerfPanel.tsx     # observer 组件，展示 perfStore
-    scene/               # 场景注册表 + 统一加载入口（含程序化占位回落）
-    utils/random.ts      # 固定 seed 随机，服务视觉回归
-  demos/                # 各 demo 实现（Stage = 画布 + HUD 整体舞台）
-  site/                 # 首页卡片、demo 页模板、元数据
-  styles/global.css     # 全站样式（flex 布局）
+浏览器要求：WebGL2；MRT / HDR 需要 `EXT_color_buffer_float`。不支持时降级单目标，G-buffer 选项隐藏；HDR cube 失败时 IBL 回退 RoomEnvironment，天空仍保留 equirect HDR。
+
+## 目录
+
+```text
+src/core/postfx/        Pipeline、BeautyPass、HDR 链、GBufferMaterial / SkyMaterial、IBL 环境
+src/core/scene/         CornellBox / OutdoorScene / GltfScene / SceneAsset
+src/core/camera/        CameraRig（预设机位 / 数字键 / 巡航）
+src/demos/hello-cube/   演示 Stage、HUD、演示模式、白炉读数
+src/site/               demo 元数据与页面
+e2e/                    冒烟、像素 A/B、白炉、演示模式测试
+docs/images/            README 用截图
 ```
 
-## 渲染链路（自建 pass）
+## 下一步
 
-渲染由自建多 pass 管线接管，**不依赖 EffectComposer**：
+1. **Sponza 室内**：材质补 normal / metallicRoughness / emissive / 透明混合，贴图 1K + KTX2，控制 ~15–20 MB。
+2. **阴影 / SSR**：`p1-shadow` 与 `p1-light-ssr`；当前 Cornel 顶灯仍是几何占位。
+3. **性能**：真实 GPU 上补完上表；再决定是否需要 GGX 重要性采样预滤波。
+4. **完整 GI**：SSGI / 探针 / 烘焙；到那一步才把「GI」作为主标题。
 
-```
-scene ──► BeautyPass ──► TonemapOutputPass ──► 屏幕
-             │                    │
-      RGBA16F 目标          曝光(EV) + 曲线 + 手写线性→sRGB
- 未编码的线性值 · MSAA 4x · DepthTexture
-```
+## Case study
 
-- `CanvasRoot` 把 `<PerfProbe />` 与 demo 内容一起包进 `<PostFX>`，由 `HDRDriver` 用 `useFrame(priority 1)` 关闭 R3F 的自动渲染并接管本帧提交。**移除 `<PostFX>` / `<HDRDriver />` 会导致画布全黑。**
-- **`<Canvas flat>` 是必需的**：R3F 在 configure 阶段执行 `gl.toneMapping = flat ? NoToneMapping : ACESFilmicToneMapping`，只靠 `createRenderer` 里的设置会被覆盖。一旦被覆盖，场景材质先做一次 ACES，HDR RT 里存的就不是线性 HDR 值。
-- `Pipeline` 及 `passes/` **不得 import React / MobX**；React 侧只通过 `HDRDriver` 驱动帧、同步尺寸与开关，方向单向（UI → 管线），逐 pass 计时反向按 5Hz 回传给 `hdrStore`。
-- `renderer.info.autoReset` 由 Pipeline 改为手动管理：three 在**每次** `render()` 调用时都会清零统计，多 pass 下不处理的话性能面板只能看到最后一个全屏 pass 的 1 个 draw call。
-- 渲到 RenderTarget 时 three 强制 `LinearSRGBColorSpace` 输出（不做 sRGB 编码），这是 HDR 链的前提；sRGB 编码只在链尾发生**一次**，且是手写分段函数（不依赖 three 内部 chunk 名）。
-- HUD 的「HDR 链路」面板提供 RT 档位标注（降级时标红）、旁路开关（与场景直出做 A/B）、调试视图下拉（把链路截断到某个 pass）。
-
-当前进度：p0-hdr 步骤 1 已完成，色调映射在步骤 2、bloom 在步骤 3 接入。详见 `TODO.md` 的「三、p0-hdr 拆解」与 `DEVLOG.md`。
-
-## 状态管理（MobX）
-
-约定：store 是类，用 `makeObservable` 显式声明注解；组件用 `observer()` 订阅后直接读字段。
-
-```ts
-import { actionBound, computed, makeObservable, observable } from 'mobx'
-
-class FooStore {
-  count = 0
-  constructor() {
-    makeObservable(this, {
-      count: observable,
-      double: computed,
-      inc: actionBound, // 自动绑定 this，可安全作为回调传递
-    })
-  }
-  get double() {
-    return this.count * 2
-  }
-  inc() {
-    this.count += 1
-  }
-}
-```
-
-本项目踩过的两个 MobX 7 差异（v7 是新主版本，不要沿用 v6 写法）：
-
-- 注解值必须是 `Annotation` 对象（`observable` / `computed` / `action` / `actionBound`），**不再接受 `"action.bound"` 这类字符串**。
-- v6 的 `action.bound` 已移除，绑定动作改用 **`actionBound`**。
-
-`perfStats` 刻意不是 store：它每帧被写入，做成响应式会导致每帧重渲染，因此由 `perfStore` 以 5Hz 采样后再交给面板。
-
-## 新增一个 demo
-
-1. 在 `src/demos/<id>/index.tsx` 实现并导出 `DemoModule`（`Stage` 组件）。
-   参数用 `createDemoStore` 管理，注意 defaults 必须显式标注类型。
-   读取参数的组件必须用 `observer()` 包裹，否则不会随参数变化重渲染。
-2. 在 `src/demos/index.ts` 的 `DEMO_MODULES` 登记。
-3. 在 `src/site/demos.ts` 的 `DEMOS` 补元数据（问题陈述 / 算法概要 / 局限 / 参考）。
-
-完成后自动获得：预设视角与巡航、URL 可分享参数、性能面板、能力档位标注、统一文档结构。
-
-## 当前状态
-
-骨架（p0-base）已落地，含一个 `hello-cube` 冒烟 demo 验证全链路。
-自建 pass 链（p0-hdr / S1）已接通：场景 → RGBA16F 目标 → 呈现，色调映射与 bloom 尚未接入。
-已实现的方向在 `TODO.md` 中勾选；其余条目在站点上明确标注为「规划中」。
+实现细节、两个关键 debug 故事（`uEnvMap` 命名导致环境贴图静默失绑、相机 target 未收敛）、设计取舍与局限见 [CASE_STUDY.md](CASE_STUDY.md)。

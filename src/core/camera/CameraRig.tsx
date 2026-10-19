@@ -94,7 +94,12 @@ export function CameraRig({
     if (flying.current) {
       camera.position.lerp(desiredPosition.current, k)
       controls.target.lerp(desiredTarget.current, k)
-      if (camera.position.distanceTo(desiredPosition.current) < 1e-3) {
+      // 必须同时等位置和 target 都收敛：初始机位恰好等于 presets[0] 时，
+      // 只看相机位置会在第一帧就判定「飞入完成」，target 永远停在旧值。
+      if (
+        camera.position.distanceTo(desiredPosition.current) < 1e-3 &&
+        controls.target.distanceTo(desiredTarget.current) < 1e-3
+      ) {
         flying.current = false
       }
     }
