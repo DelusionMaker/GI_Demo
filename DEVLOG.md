@@ -9,7 +9,66 @@
 
 ---
 
+## 2026-10-19 · p0-assets 步骤 1：Cornell Box 程序化参考场景 + 相机/灯光适配
+
+### 目标
+
+把 `p0-assets` 的第一个场景落地：按 Cornell 官方测量数据程序化搭建 Cornell Box，替换掉 `cornell` 档位的程序化占位房间；同时处理它在现有 R3F/自建 pass 管线里的两个适配点——相机机位与主光方向。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/scene/CornellBox.tsx` | 新增 | 按官方尺寸程序化搭建：五面房间 + 短块 + 高块 + 顶灯面板；全部使用 `GBufferMaterial`，反照率用线性值 |
+| `src/core/scene/SceneAsset.tsx` | 改造 | `id === 'cornell'` 路由到 `CornellBox`（程序化参考场景，不走 GLTF / 占位） |
+| `src/core/scene/scenes.ts` | 改造 | 更新 cornell 的 note 与 `url` 字段注释（null 不再等同于「占位」） |
+| `src/demos/hello-cube/index.tsx` | 改造 | Cornell 专用两个机位（相机在开口一侧朝 +z）、主光改到开口内侧上前方、探针挪到不遮挡参考几何的位置 |
+| `src/core/renderer/createRenderer.ts` | 改造 | 显式 `setClearColor(0x000000, 1)`，保证画布不透明 |
+| `src/core/capabilities.ts` | 改造 | MRT 探测保存 / 恢复 clearColor 与 clearAlpha（见踩坑 1） |
+| `src/site/demos.ts` | 改造 | 补 Cornell 场景的算法描述与如实 limitations（无面光源 / 软阴影 / 色溢） |
+
+### 关键设计决策
+
+1. **尺寸取官方测量值，不取二手教程数字**：房间 552.8 × 548.8 × 559.2，短块底面中心 (185.5, 0, 169.0)、高块底面中心 (368.5, 0, 351.25)，方块按实测倾角 ±16.6° / 17.0° 近似为轴对齐盒子。整体 1:100 缩放到 three 单位（房间约 5.5 宽），与现有相机/灯光尺度一致。来源：<https://bowers.cornell.edu/computer-graphics/data>。
+2. **不做镜像，保留官方坐标朝向**：相机放在 z 负半轴朝 +z 看，世界 +x 在画面左侧，因此红墙（官方 x=552.8）在左、绿墙（x=0）在右，高块在左、短块在右，与经典 Cornell 照片一致。代价是 Cornell 需要独立机位，不能复用占位场景的 `[0, 1.7, 5.6]`。
+3. **反照率走线性值**：`createGBufferMaterial` 的 `uBaseColor` 在 shader 里直接当线性 albedo 用，传 `#hex` 会被 `THREE.Color` 再做一次 sRGB→线性，画面整体偏暗。白 / 绿 / 红分别用 `setRGB(0.74,…)`、`(0.12, 0.45, 0.15)`、`(0.63, 0.065, 0.05)` 并显式指定 `LinearSRGBColorSpace`。
+4. **顶灯只建几何**：面光源 / emissive 不在本步范围；面板用高反照率材质占位，发光与软阴影留给 `p1-shadow` / 阶段 3 GI，避免在 G-buffer 材质里提前引入 emissive 语义。
+5. **主光方向按场景切换**：Cornell 的主光放在开口内侧上前方 `[3, 8, -6]`，否则后墙与方块正面（法线 -z）会背光，画面只剩环境项。占位场景保持原 `[4.5, 6, 3]`。
+6. **探针不遮挡参考几何**：Cornell 下探针移到开口内侧左前角 `[1.8, 0.478, -2.0]`，落地、避开两块方块绕 y 旋转后的扫掠范围；否则它会插进短块/高块。
+
+### 踩坑与修复
+
+1. **MRT 探测泄漏 clearAlpha，Cornell 才把它暴露出来**（本次最值得记的一条）
+   - 现象：接入 Cornell 后 A/B 用例失败，线性域平均差 5.29、差异像素 66.4%，但目视两张图几乎一样；采样发现差异集中在场景外的空白区域，bypass 背景为 `(5,7,11)`——正好是 `.stage` 的 CSS 背景 `#05070b`。
+   - 根因：`capabilities.ts` 的 MRT 探测为了回读把渲染器 clearColor 设为 `(0,0,0,0)`，之后只恢复了 renderTarget，没有恢复 clearColor / clearAlpha；bypass 直出路径没有全屏 pass 覆盖 alpha，画布因此透明并透出 CSS 背景。原占位场景几乎铺满全屏，这个洞一直没暴露。
+   - 修复：探测前后保存 / 恢复 `getClearColor` / `getClearAlpha`（放在 `finally` 里，异常也能恢复）；`createRenderer` 再显式设一次不透明 clear。修复后 A/B 线性域平均差 **0.211**、差异像素 **0.218%**。
+2. **天花板 / 后墙是单面平面，法线必须朝内**：后墙 `rotation-y = π` 才能朝向相机；天花板 `rotation-x = +π/2` 法线朝下；侧墙分别 `±π/2`。单面渲染在轨道相机转到盒子外侧时会「看穿」墙体，属于预期（方便观察内部），不改成 DoubleSide。
+3. **方块倾角不能照抄 pbrt 场景的 ±18°**：官方公开数据给出的是实测四边形，短块约 -16.6°、高块约 +17.0°，直接用 18° 会让方块角部与墙面的间距偏差变大。
+
+### 验证
+
+- `npm run typecheck`：通过。
+- `npm run build`：通过（652 modules；1.33 MB / gzip 382 kB，既有体积警告）。
+- `npm run smoke`：**7 passed**。
+  - RT 档位 RGBA16F；画面亮度均值 47.77、标准差 74.17。
+  - A/B（自建链 vs 直出）：线性域平均差 **0.211**、最大差 29.12、差异 > 8 像素占比 **0.218%**。
+  - G-buffer 三层：gAlbedo 28.25 / 48.93，gNormal 45.91 / 68.28，gMRAO 62.32 / 88.67，视图切换零 console error。
+  - Bloom A/B：平均差 52.673、差异像素 71.815%（测试用低阈值强制可见）。
+- 截图：`e2e/screenshots/01-pipeline.png`（Cornell 正视）、`00-panel.png`（HUD / 计时）。
+
+### 遗留 / 下一步
+
+1. **室内**：Sponza（Khronos glTF，CC BY 3.0）。阻塞点不是下载，而是 `GBufferMaterial` 目前只支持 uniform 颜色 / 粗糙度 / 金属度，没有 albedo / roughness / metalness / normal 贴图与 UV 变换；需先扩展材质，再 traverse 替换 GLTF 自带 `meshStandardMaterial`（否则 MRT 下 draw 被丢弃）。
+2. **户外**：Poly Haven HDRI（CC0）+ LittlestTokyo 或简易体块；`GBufferEnvironment` 目前只捕获 `RoomEnvironment`，需增加「加载 HDR → 立方体贴图」分支。
+3. **顶灯发光 / 面光源 / 软阴影**：与 `p1-shadow`、阶段 3 GI 一起做；当前 directional + ambient 只是近似。
+4. **相机按场景包围盒自动取景**：目前 Cornell 机位是硬编码常量，接入室内/户外后手工调机位不可扩展。
+5. **性能数据**：Cornell 只有 8 个 mesh，仍不足以讲性能故事；等室内/户外真实资产接入后再采逐 pass GPU ms。
+
+---
+
 ## 2026-10-18 · p1-pbr-ibl 框架：真实灯光接入 + 环境贴图/白炉骨架（IBL 算法段留给你）
+
+> **2026-10-19 状态更新**：本条目末尾「遗留 / 下一步」的第 1 项（`iblDiffuse` / `iblSpecular`）已由用户完成并合入 `gbuffer.frag`，白炉分支也已接通；第 2–4 项为可选收口。下方正文保留 2026-10-18 当天的实施记录，不再按「待写」理解。
 
 ### 目标
 
@@ -23,7 +82,7 @@
 | `src/core/postfx/GBufferLightSync.tsx` | 新增 | 每帧遍历场景灯光：主平行光（优先 castShadow）+ AmbientLight 求和 → 共享 uniform；模块级临时对象避免 GC |
 | `src/core/postfx/GBufferEnvironment.tsx` | 新增 | `RoomEnvironment`（程序化房间，无外部资产）→ CubeCamera 渲进带 mipmap 的立方体贴图（256²，有浮点缓冲用 HalfFloat） |
 | `src/core/postfx/materials/GBufferMaterial.ts` | 改造 | uniforms 展开共享状态 |
-| `src/core/postfx/shaders/gbuffer.frag` | 改造 | 新增灯光/环境/白炉 uniform；直接光改用 `uLightDir/uLightColor`；`iblDiffuse` / `iblSpecular` 占位函数 + **TODO(p1 · 你来写)**；白炉分支（关直接光） |
+| `src/core/postfx/shaders/gbuffer.frag` | 改造 | 新增灯光/环境/白炉 uniform；直接光改用 `uLightDir/uLightColor`；`iblDiffuse` / `iblSpecular` 占位函数 + **TODO(p1 · 你来写)**（2026-10-19 已实现）；白炉分支（关直接光） |
 | `src/demos/hello-cube/index.tsx` | 改造 | 新增 `env / envIntensity / furnace` 参数（进 URL）；面板控件；`GBufferParamSync` 同步旋钮 → uniform |
 | `src/site/demos.ts` | 改造 | `pbr-ibl` 条目 `planned → wip`，如实标注「IBL 算法段未实现、环境贴图为 mip 近似、单主光」 |
 | `e2e/smoke.spec.ts` | 改造 | 新增 p1 用例：环境光开关/白炉进 URL、开启后画面非空、零 console error |
@@ -47,14 +106,11 @@
 - 接入真实灯光后画面变化符合预期：亮度均值 79.52 → 85.29、标准差 42.55 → 49.60（主光 3.0 → 场景 2.2、环境 0.03 → ambientLight 0.25）；球面 GGX 高光与箱体明暗关系正常。
 - 截图：`e2e/screenshots/09-ibl-env-on.png`。
 
-### 遗留 / 下一步（**你自写**）
+### 遗留 / 下一步（2026-10-19 更新）
 
-1. **`gbuffer.frag` 的两个函数**（`TODO(p1 · 你来写)`）：
-   - `iblSpecular`：`R = reflect(-V, N)`，按 roughness 选 LOD 采样 `tEnvMap`，乘 DFG 近似（Karis EnvBRDFApprox）→ `prefiltered * (F0 * brdf.x + brdf.y)`；
-   - `iblDiffuse`：高 LOD 采样近似 irradiance，乘 `kD = (1-F)(1-metalness)`；
-   - 白炉：`uFurnace=1` 时环境采样替换为 `vec3(1.0)`。
-2. **白炉验证**：开 `?furnace=1` 截图，测不同 roughness（0.1 / 0.5 / 1.0）下的亮度偏差，目标 ±2%（单次散射 GGX 在粗糙端会偏暗，如实写进 limitations）。
-3. **调优与收口**：IBL 实现后把 `env` 默认改为 `true`，`metric` 更新为实测偏差；真实 GPU 确认 HalfFloat 立方体贴图无报错。
+1. ~~**`gbuffer.frag` 的两个函数**~~ **已完成（2026-10-19）**：`iblSpecular` / `iblDiffuse` 已实现（`reflect(-V, N)` + roughness→LOD + Karis EnvBRDFApprox；irradiance 取高 LOD + `kD`），白炉分支已接通。
+2. **白炉定量验证（可选）**：开 `?furnace=1` 截图，测不同 roughness（0.1 / 0.5 / 1.0）下的亮度偏差，目标 ±2%。当前只有定性结论（单次散射 GGX 在粗糙端偏暗，已写进 site limitations），定量数据未单独入库。
+3. **调优与收口（可选）**：`env` 默认仍为 `false`（作为可选档位）；若要默认展示 IBL，把它切 `true` 并更新 `metric`；真实 GPU 确认 HalfFloat 立方体贴图无报错。
 4. **算法升级（可选）**：自写 GGX 重要性采样预滤波，替代 CubeCamera 的 box-filter mip 链（面试可讲的下一层）。
 
 ---

@@ -60,11 +60,14 @@ npm run build      # 生产构建
   - [ ] monorepo 拆分 → eng-shared
 - [x] **p0-hdr** HDR 管线与色调映射（ACES / AgX、自动曝光、物理 bloom）　**✅ S1–S5 已完成（见 DEVLOG 2026-10-13）**
 - [x] **p0-gbuffer-hud** G-buffer MRT + 性能 HUD　**✅ S1–S3 完成（2026-10-18，见 DEVLOG）**：GPU 计时 / MRT 真实启用 / 自写前向 BRDF / 三层调试视图
-- [ ] **p0-assets** 准备 3 个场景资产（Cornell box / 室内 / 户外）
+- [~] **p0-assets** 准备 3 个场景资产（Cornell box / 室内 / 户外）
+  - [x] **Cornell Box**（2026-10-19）：按 Cornell 官方测量数据程序化搭建（552.8 × 548.8 × 559.2，1:100；短块 165³ / 高块 165 × 330 × 165），见 `src/core/scene/CornellBox.tsx`
+  - [ ] **室内**：Sponza（Khronos glTF，CC BY 3.0）——需先给 `GBufferMaterial` 加 albedo / roughness / metalness / normal 贴图支持
+  - [ ] **户外**：Poly Haven HDRI（CC0）+ LittlestTokyo / 简易体块；`GBufferEnvironment` 增加 HDR 加载分支
 
 ### 阶段 1 · 直接光照（2–3 周）
 
-- [~] **p1-pbr-ibl** PBR（Cook-Torrance / GGX + Smith + Schlick）+ IBL（split-sum）+ 白炉测试　**框架就绪（2026-10-18）：真实灯光接线 / 环境贴图 / 白炉开关；`iblDiffuse` / `iblSpecular` 算法段待你自写（见 DEVLOG）**
+- [x] **p1-pbr-ibl** PBR（Cook-Torrance / GGX + Smith + Schlick）+ IBL（split-sum）+ 白炉测试　**核心完成（2026-10-19 文档对齐）**：`gbuffer.frag` 的 `iblDiffuse` / `iblSpecular` 已实现（roughness→LOD + Karis EnvBRDFApprox + 白炉分支）；真实灯光 / CubeCamera 环境贴图 / 白炉开关已接通。可选收口：`env` 默认切 `true`、白炉 ±2% 定量数据、GGX 重要性采样预滤波（见 DEVLOG 2026-10-18「遗留」）
 - [ ] **p1-shadow** 阴影全家桶（SM / PCF / PCSS / CSM / VSM + 三种 bias 补偿）
 - [ ] **p1-light-ssr** 多光源与剔除（Forward / Deferred / Clustered 三档）+ SSR
 

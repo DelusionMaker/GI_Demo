@@ -5,8 +5,9 @@ export interface SceneEntry {
   name: string
   /**
    * GLTF 路径（Draco / meshopt 压缩）。
-   * TODO(p0-assets): 填入真实资产；为 null 时回落到程序化占位场景，
-   * 保证在资产就绪前所有 demo 都能跑通。
+   * - 有值：加载 GLTF；
+   * - null：cornell 走 `CornellBox` 程序化参考场景；其余回落到占位场景，
+   *   保证在资产就绪前所有 demo 都能跑通。
    */
   url: string | null
   /** 占位场景的色调，仅用于区分三个场景 */
@@ -20,7 +21,7 @@ export const SCENES: Record<SceneId, SceneEntry> = {
     name: 'Cornell Box',
     url: null,
     tint: '#c8c0b2',
-    note: 'GI 收敛、能量守恒与白炉测试的参考场景',
+    note: '按 Cornell 官方测量尺寸程序化搭建（1:100），GI 收敛 / 能量守恒 / 白炉测试的参考场景',
   },
   indoor: {
     id: 'indoor',

@@ -69,12 +69,14 @@ export const DEMOS: DemoMeta[] = [
       '自写前向 Cook-Torrance 直接光：GGX 法线分布 + Smith 几何遮蔽 + Schlick 菲涅尔。',
       '法线以 world-space 编码进 gNormal（RGBA16F），MRAO 分通道存 metal / roughness / ao / emissive。',
       '调试视图可切 gAlbedo / gNormal / gMRAO，直接查看 MRT 原始数据（不经过 tonemap / 曝光）。',
+      'Cornell Box 按官方测量尺寸程序化搭建（552.8 × 548.8 × 559.2，1:100），作为 GI 收敛 / 白炉测试的参考几何。',
     ],
     limitations: [
-      '自写 BRDF 的光照仍是硬编码单主光 + 占位环境项，多光源与 IBL 待 p1-pbr-ibl。',
+      '自写 BRDF 的光照仍是单主光 + 环境项，多光源与剔除待 p1-light-ssr。',
+      'Cornell Box 的顶灯只建了几何，尚未作为面光源发光；当前用单主平行光近似，因此没有软阴影与色溢（GI 属阶段 3）。',
       'MSAA 在 MRT 下已开启 4×（BeautyPass samples: 4），三附件 resolve 正常；深度在 SSR 阶段仍需目标设备实测。',
       'MRT 需要 EXT_color_buffer_float；不支持的设备降级为单目标，G-buffer 选项自动隐藏。',
-      '场景为程序化占位，真实资产待 p0-assets 补齐。',
+      'Cornell 为程序化参考场景；室内 / 户外仍是占位，真实 GLTF 资产待 p0-assets 补齐。',
       'GPU 计时仅在支持 EXT_disjoint_timer_query_webgl2 的设备显示，软件渲染器下不可用。',
     ],
     sources: [

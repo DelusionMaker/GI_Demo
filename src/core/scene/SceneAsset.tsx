@@ -1,13 +1,18 @@
 import { useGLTF } from '@react-three/drei'
 import { Suspense, useMemo } from 'react'
 import { createGBufferMaterial } from '@/core/postfx/materials/GBufferMaterial'
+import { CornellBox } from './CornellBox'
 import { SCENES, type SceneId } from './scenes'
 
 /**
  * 统一场景加载入口（文档「共享基础设施」要求：统一的场景加载器）。
  * 资产未就绪时（url === null）回落到程序化占位场景，保证 demo 可运行。
+ *
+ * cornell 是「按官方尺寸程序化的参考场景」，不是 GLTF 资产：
+ * 它有精确的几何与反照率，用于 GI 收敛 / 白炉测试，也不受贴图/材质管线阻塞。
  */
 export function SceneAsset({ id }: { id: SceneId }) {
+  if (id === 'cornell') return <CornellBox />
   const entry = SCENES[id]
   if (!entry.url) return <PlaceholderScene tint={entry.tint} />
   return (

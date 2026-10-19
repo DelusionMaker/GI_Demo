@@ -78,21 +78,17 @@ vec3 envBRDFApprox(vec3 F0, float NoV, float roughness) {
 }
 
 // ==========================================================================
-// TODO(p1 · 你来写)：IBL（split-sum 环境光照）
+// IBL（split-sum 环境光照）—— 已实现（2026-10-19）
 //
-// 目标：把 main 里的占位环境项换成真正的环境光照。自查点：
-//   1) 漫反射：irradiance(N) 近似 —— 对 tEnvMap 取高 LOD（如最大 LOD - 2）即可；
-//      能量上乘 kD = (1-F)(1-metalness)，与直接光同一套能量分配；
+// 实现要点：
+//   1) 漫反射：irradiance(N) 用高 LOD 采样近似；能量上乘
+//      kD = (1-F)(1-metalness)，与直接光同一套能量分配；
 //   2) 镜面：R = reflect(-V, N)，按 roughness 映射 LOD 采样预滤波环境；
-//      再乘 split-sum 的 DFG 项（可用 Karis 的 EnvBRDFApprox 解析近似，
-//      或用 BRDF LUT；关键是 F0 * brdf.x + brdf.y）；
+//      再乘 split-sum 的 DFG 项（Karis EnvBRDFApprox，F0 * brdf.x + brdf.y）；
 //   3) 白炉（uFurnace == 1）：环境采样替换为 vec3(1.0)，直接光由 main 置零；
-//      正确实现下画面应接近均匀白——单次散射 GGX 在 roughness→1 会损失多次散射
-//      能量而偏暗，属已知取舍，请把实测偏差写进 demo limitations；
+//      单次散射 GGX 在 roughness→1 会损失多次散射能量而偏暗，属已知取舍；
 //   4) uHasEnv == 0 时返回 vec3(0.0)，由 main 的占位环境项兜底；
 //   5) 采样约定：tEnvMap 是世界空间方向的立方体贴图，最大 LOD 由尺寸决定（当前 256 → 8）。
-//
-// 建议顺序：先实现镜面（视觉差异最明显），再补漫反射；每步用白炉 + 单球验证。
 // ==========================================================================
 vec3 iblDiffuse(vec3 N, vec3 V, vec3 F0, float roughness) {
   if (uHasEnv == 0) return vec3(0.0);

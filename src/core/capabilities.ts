@@ -114,22 +114,33 @@ void main() {
         const probeMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), probeMat)
         probeScene.add(probeMesh)
 
-        renderer.setRenderTarget(test)
-        renderer.setClearColor(0x000000, 0)
-        renderer.clear(true, false, false)
-        renderer.render(probeScene, probeCam)
+        // 保存 / 恢复渲染器状态：探测用的 clearColor(0,0,0,0) 若泄漏到主渲染，
+        // bypass 直出路径会让画布变透明，透出 .stage 的 CSS 背景（A/B 背景色差）。
+        const prevTarget = renderer.getRenderTarget()
+        const prevClearColor = renderer.getClearColor(new THREE.Color())
+        const prevClearAlpha = renderer.getClearAlpha()
 
-        const gl2 = gl as WebGL2RenderingContext
-        const buf = new Uint8Array(4)
-        gl2.readBuffer(gl2.COLOR_ATTACHMENT0)
-        gl2.readPixels(0, 0, 1, 1, gl2.RGBA, gl2.UNSIGNED_BYTE, buf)
-        renderer.setRenderTarget(null)
+        try {
+          renderer.setRenderTarget(test)
+          renderer.setClearColor(0x000000, 0)
+          renderer.clear(true, false, false)
+          renderer.render(probeScene, probeCam)
 
-        // 非全黑即代表 MRT 真的能把颜色写进第 0 附件（规避 SwiftShader 静默黑屏）
-        mrtSupported = buf[0] + buf[1] + buf[2] > 24
+          const gl2 = gl as WebGL2RenderingContext
+          const buf = new Uint8Array(4)
+          gl2.readBuffer(gl2.COLOR_ATTACHMENT0)
+          gl2.readPixels(0, 0, 1, 1, gl2.RGBA, gl2.UNSIGNED_BYTE, buf)
 
-        probeMesh.geometry.dispose()
-        probeMat.dispose()
+          // 非全黑即代表 MRT 真的能把颜色写进第 0 附件（规避 SwiftShader 静默黑屏）
+          mrtSupported = buf[0] + buf[1] + buf[2] > 24
+        } finally {
+          renderer.setRenderTarget(prevTarget)
+          renderer.setClearColor(prevClearColor, prevClearAlpha)
+          probeMesh.geometry.dispose()
+          probeMat.dispose()
+          test.dispose()
+        }
+      } else {
         test.dispose()
       }
     } catch {

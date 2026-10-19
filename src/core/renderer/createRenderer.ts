@@ -35,6 +35,11 @@ export function createRenderer(input: RendererFactoryInput): THREE.WebGLRenderer
   renderer.outputColorSpace = THREE.SRGBColorSpace
   renderer.toneMapping = THREE.NoToneMapping
 
+  // 画布必须不透明：bypass 直出路径不像自建链那样有全屏 pass 覆盖 alpha，
+  // 默认 clearAlpha=0 会让画布透出 .stage 的 CSS 背景（#05070b），
+  // 在场景未覆盖全屏时表现为「A/B 背景色差」。
+  renderer.setClearColor(0x000000, 1)
+
   capabilitiesStore.detect(renderer)
 
   return renderer

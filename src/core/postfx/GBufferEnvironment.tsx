@@ -14,7 +14,7 @@ import { gbufferShared } from './materials/gbufferShared'
  *
  * 已知近似（写进 demo limitations）：
  * - CubeCamera 的 mip 链是 box filter，不是 GGX 重要性采样预滤波；
- * - split-sum 的 DFG 项交给 `gbuffer.frag` 的自写算法段（TODO(p1)）。
+ * - split-sum 的 DFG 项在 `gbuffer.frag` 的 `iblSpecular` 内（Karis EnvBRDFApprox）。
  *
  * 挂载在 Canvas 内即可，生命周期跟随画布（StrictMode 双挂载会重建一次）。
  */

@@ -19,7 +19,18 @@ import type { DemoModule } from '../types'
 
 type DebugView = 'shaded' | 'normals' | 'wireframe'
 
-const PRESETS: CameraPreset[] = [
+/**
+ * Cornell Box 的相机固定在开口一侧（z 负半轴）朝 +z 看：
+ * 这是官方数据的原始视角，红色墙在画面左侧、绿色墙在右侧。
+ * fov 45 下相机距开口约 5.8，开口会略微充满画面，与经典 Cornell 照片一致。
+ */
+const CORNELL_PRESETS: CameraPreset[] = [
+  { name: '正视', position: [0, 2.74, -8.6], target: [0, 2.74, 0] },
+  { name: '斜俯视', position: [4.6, 4.2, -7.4], target: [0, 2.2, 0] },
+]
+
+/** 占位场景（室内 / 户外）仍沿用原来的机位，等真实资产接入后再按包围盒适配 */
+const PLACEHOLDER_PRESETS: CameraPreset[] = [
   { name: '正视', position: [0, 1.7, 5.6], target: [0, 0.9, 0] },
   { name: '斜俯视', position: [4.2, 3.4, 4.2], target: [0, 0.6, 0] },
 ]
@@ -43,7 +54,7 @@ type DemoParams = {
   scene: SceneId
   debug: DebugView
   autopilot: boolean
-  /** 环境光（IBL）：ibDiffuse / iblSpecular 算法段实现后生效 */
+  /** 环境光（IBL）：gbuffer.frag 的 split-sum 环境项开关 */
   env: boolean
   /** 环境强度倍率 */
   envIntensity: number
@@ -59,8 +70,8 @@ const DEFAULTS: DemoParams = {
   scene: 'cornell',
   debug: 'shaded',
   autopilot: false,
-  // 默认关闭：IBL 算法段（gbuffer.frag 的 TODO(p1)）未实现前开启会得到黑屏，
-  // 与 p0-hdr 的 bloom 同理——「未实现的状态不要默认跑」。
+  // 默认关闭：IBL 是可选档位（RoomEnvironment + CubeCamera 的近似），
+  // 打开后可对比「IBL」与「占位环境项」；白炉测试单独开启。
   env: false,
   envIntensity: 1,
   furnace: false,
@@ -71,8 +82,9 @@ const store = createDemoStore(DEFAULTS)
 
 /** 着色探针物体：S2 起用自写 G-buffer 材质填充 MRT，调试视图切它的中间量 */
 const ShadingProbe = observer(function ShadingProbe() {
-  const { speed, roughness, metalness, debug } = store.params
+  const { speed, roughness, metalness, debug, scene } = store.params
   const ref = useRef<THREE.Mesh>(null)
+  const isCornell = scene === 'cornell'
 
   // G-buffer 材质只建一次；roughness / metalness 改动时同步到 uniform。
   const gbufferMaterial = useMemo(() => createGBufferMaterial({ color: '#cbd5e4' }), [])
@@ -89,8 +101,10 @@ const ShadingProbe = observer(function ShadingProbe() {
     if (ref.current) ref.current.rotation.y += delta * speed
   })
 
+  // Cornell 场景：探针放到开口内侧的左前角（画面左下方），
+  // 落地且避开两块 165 方块（含绕 y 旋转后的扫掠范围），不遮挡参考几何。
   return (
-    <mesh ref={ref} position={[0, 1.15, 1.9]} castShadow>
+    <mesh ref={ref} position={isCornell ? [1.8, 0.478, -2.0] : [0, 1.15, 1.9]} castShadow>
       <boxGeometry args={[0.95, 0.95, 0.95]} />
       <primitive object={gbufferMaterial} attach="material" />
     </mesh>
@@ -188,18 +202,22 @@ const DemoControls = observer(function DemoControls() {
 })
 
 const Stage = observer(function Stage() {
-  const { autopilot } = store.params
+  const { scene, autopilot } = store.params
+  const presets = scene === 'cornell' ? CORNELL_PRESETS : PLACEHOLDER_PRESETS
+  // Cornell 的灯在开口内侧的上前方，才能照亮后墙与方块正面；
+  // 占位场景沿用原来的右上前方主光。
+  const keyLightPosition: [number, number, number] = scene === 'cornell' ? [3, 8, -6] : [4.5, 6, 3]
   return (
     <div className="stage">
-      <CanvasRoot shadows cameraPosition={PRESETS[0].position}>
+      <CanvasRoot shadows cameraPosition={presets[0].position}>
         <CameraRig
-          presets={PRESETS}
+          presets={presets}
           autopilot={autopilot}
           onAutopilotChange={(value) => store.set({ autopilot: value })}
         />
         <ambientLight intensity={0.25} />
         <directionalLight
-          position={[4.5, 6, 3]}
+          position={keyLightPosition}
           intensity={2.2}
           castShadow
           shadow-mapSize-width={1024}
