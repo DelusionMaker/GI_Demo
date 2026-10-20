@@ -1,4 +1,4 @@
-import { helloCubeDemo, pbrIblDemo } from './hello-cube'
+import { helloCubeDemo, pbrIblDemo, shadowDemo } from './hello-cube'
 import type { DemoModule } from './types'
 
 /**
@@ -13,4 +13,6 @@ export const DEMO_MODULES: Record<string, DemoModule> = {
   // 避免站点上标着 done 的页面却落到「规划中」占位。
   hdr: helloCubeDemo,
   'pbr-ibl': pbrIblDemo,
+  // p1-shadow：同一个 Stage，默认 Cornell + 阴影开启 + 技术模式
+  shadows: shadowDemo,
 }

@@ -70,6 +70,12 @@ export interface Pass {
   /** 链尾 pass：直接输出到屏幕，Pipeline 不为它分配 RenderTarget */
   toScreen?: boolean
   /**
+   * Pass 自己管理渲染目标（如阴影深度图集）。
+   * 为 true 时 Pipeline 不分配 target、传入 null；`render()` 返回什么就作为
+   * 下一环的 input（辅助 pass 通常原样返回 `ctx.input`）。
+   */
+  selfManaged?: boolean
+  /**
    * source === 'prev' 时实现。
    * target 为 null 表示输出到屏幕；返回 null 表示「已出屏，链路到此结束」。
    */

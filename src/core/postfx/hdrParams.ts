@@ -68,3 +68,17 @@ const GBUFFER_DEBUG_ATTACHMENT: Record<string, number> = {
 export function resolveGBufferDebug(value: string): number | null {
   return GBUFFER_DEBUG_ATTACHMENT[value] ?? null
 }
+
+/**
+ * p1-shadow 的两个调试视图：
+ * - 'shadow:atlas'   独立全屏 pass，直接显示深度图集；
+ * - 'shadow:cascade' 走正常 beauty 输出，把 cascade 索引染成色块。
+ * 两者都不是「按 pass 名截断」，需要在驱动里单独分流。
+ */
+export function resolveShadowAtlasDebug(value: string): boolean {
+  return value === 'shadow:atlas'
+}
+
+export function resolveShadowCascadeDebug(value: string): boolean {
+  return value === 'shadow:cascade'
+}

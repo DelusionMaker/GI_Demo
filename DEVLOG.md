@@ -9,6 +9,73 @@
 
 ---
 
+## 2026-10-20 · p1-shadow 骨架：深度图集 + CSM + 中间量调试，算法段留白
+
+### 目标
+
+把 p1-shadow 的**框架**搭完：主平行光视角的深度图集、1–4 级 CSM、参数管线、调试视图与回归用例。**可见性计算（SM / PCF / PCSS / bias / 级联过渡）留给自写**——与 p0-hdr、p1-pbr-ibl 的分工一致：作品集里需要本人讲清楚的部分不由工具代笔。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/passes/ShadowMapPass.ts` | 新增 | 链首辅助 pass：找主平行光 → 正交相机拟合 → 1–4 级 CSM 渲进深度图集；单级联按投影物包围球收紧；写共享 uniform |
+| `src/core/postfx/passes/ShadowDebugPass.ts` / `shaders/shadow-debug.frag` | 新增 | 深度图集全屏调试视图（tile 边框、未用 tile 压暗） |
+| `src/core/postfx/shadowTypes.ts` | 新增 | `ShadowMode` / `ShadowBiasMode` 与 uniform 索引映射（渲染核心与 UI 共用，互不 import） |
+| `src/core/postfx/shadowParams.ts` / `ShadowPanel.tsx` | 新增 | 阴影旋钮（开关 / 算法 / 级联 / 贴图 / bias / 采样 / 强度 / 距离），全部进 URL |
+| `src/core/postfx/Pass.ts` / `Pipeline.ts` | 改造 | 新增 `selfManaged`：pass 自带渲染目标，Pipeline 不分配 / 不回收 |
+| `src/core/postfx/materials/gbufferShared.ts` | 改造 | `uShadowAtlas` / `uShadowMatrices[4]` / `uShadowSplits` / 算法与 bias 参数 |
+| `src/core/postfx/shaders/gbuffer.frag` | 改造 | `shadowCascadeIndex()`（已实现）+ `shadowFactor()`（TODO）+ cascade 调试分支；直接光乘可见性 |
+| `src/core/postfx/HDRPipeline.ts` / `HDRDriver.tsx` / `HDRPanel.tsx` / `hdrParams.ts` | 改造 | 挂链、每帧同步、三个 toScreen 出口互斥、调试视图下拉新增两项 |
+| `src/core/scene/CornellBox.tsx` / `GltfScene.tsx` | 改造 | 补 `castShadow` / `receiveShadow`（Cornell 两块方块、LittlestTokyo 全部 mesh） |
+| `src/demos/hello-cube/index.tsx` / `src/demos/index.ts` | 改造 | `shadows` 页面：Cornell + 阴影开启 + 技术模式 |
+| `src/site/demos.ts` | 改造 | `shadows` 条目 `planned → wip`，如实写明「shadowFactor 仍是占位」 |
+| `e2e/shadow.spec.ts` | 新增 | 图集非空 / cascade 分层可见 / 户外蒙皮模型进图集 / 参数回填；算法段 A/B 用 `test.fixme` 留位 |
+
+### 关键设计决策
+
+1. **`selfManaged` pass 而不是改 `source: 'scene'`**：阴影 pass 要看向光源相机、且产物是「辅助纹理」不能替换主链 input。让它自己持有 RT 并原样返回 `ctx.input`，Pipeline 只负责调度与 GPU 计时——`shadow-map` 因此能出现在逐 pass 性能表里。
+2. **单张深度图集，tile 变换烘进矩阵**：1 级用满图集，2 级 2×1，3–4 级 2×2。`NDC→[0,1]` 与 tile 偏移/缩放合成一个矩阵写进 `uShadowMatrices[ci]`，shader 侧拿到的 `xy` 直接是图集 UV——自写段少一步换算，也避免 tile 逻辑散落在 GLSL 里。
+3. **深度图集用 DepthTexture + `sampler2D`**：不用 `sampler2DShadow`。手写比较更适合讲清 bias / PCF / PCSS 的数学，调试视图也能直接显示原始深度。
+4. **阴影 pass 临时关闭 three 内建 shadowMap**：主光带 `castShadow`，`renderer.render` 会在每级阴影渲染时再跑一遍 three 自己的 shadow pass（对自写材质完全无效）。pass 内 `shadowMap.enabled = false`，`finally` 恢复。
+5. **只渲 `castShadow` 的 mesh**：逐帧 `traverse` + 临时 `visible=false`。天空球（半径 300）与只接收阴影的地面必须排除，否则图集会被它们占满。demo 规模可接受，生产应换 layer 掩码（已写进 TODO）。
+6. **`shadowFactor()` 占位返回 1.0**：框架写入所有 uniform、图集真实生成，但着色器不压暗画面。这样骨架阶段可以随时截图 / 跑回归，不会把「还没实现」伪装成「已实现」；`e2e` 的 A/B 用 `test.fixme` 留到算法完成后启用。
+7. **三个 toScreen 出口互斥**：`tonemap-output` / `gbuffer-debug` / `shadow-debug` 由 `HDRPipeline.updateOutputEnabled()` 统一裁决；`shadow:cascade` 则走正常 beauty→tonemap，只切换 `uShadowDebugCascade`。
+
+### 踩坑与修复
+
+1. **单级联按视锥切片拟合，图集 95% 是空的**
+   - 首轮实现严格按 CSM 标准：把相机视锥从 near 切到 `maxDistance=40`，取 8 个角点拟合包围球。Cornell 只有两块方块 + 探针，结果整张 2048² 图集里只有中间几个像素有内容（亮度均值 2.83）。
+   - 修复：单级联改为拟合**投影物包围球**（每 30 帧缓存一次，只统计 `castShadow` 的 mesh）。同样 2048² 下，图集均值 2.83 → 35.58、标准差 20.65 → 60.35，三个投影物清晰可见。
+   - 代价：视锥外、但沿光源方向能投影进画面的物体不被收进来；多级联仍按视锥切片。已在 `fitCascade()` 与 TODO.md 5.4 如实标注。
+2. **`renderer.setViewport` 不能用来切图集 tile**
+   - three r170 源码：`setViewport` 会 `multiplyScalar(_pixelRatio)`，而 RenderTarget 的 viewport 是物理像素；DPR=1.25 时 tile 会错位。
+   - 修复：改 `target.viewport` / `target.scissor` / `target.scissorTest`，再 `setRenderTarget(target)` 让 three 应用；不要调 `renderer.setScissorTest`（会污染后续出屏）。
+3. **three 内建 shadow pass 被顺带触发**：见设计决策 4。不加开关时每级阴影渲染都会多跑一遍 1024² 的 three shadow map，纯浪费。
+4. **蒙皮模型是否支持 `scene.overrideMaterial`**：LittlestTokyo 用 `MeshDepthMaterial` 渲染成功（three 对 SkinnedMesh 自动加 skinning 定义），户外图集里能看到完整模型与球列；没有出现骨骼错位。
+5. **Playwright 启动清理 `test-results/` 被安全删除拦截**（本机环境问题，非代码）：历史产物 1507 个文件触发批量删除保护，改用 `--output=test-results-shadow` 运行；提交前不依赖该目录。
+
+### 验证
+
+- `npm run typecheck`：通过。
+- `npm run build`：通过（664 modules；1,362.00 kB / gzip 392.83 kB，既有体积警告）。
+- `npm run smoke`：**14 passed + 1 skipped**（skip 是算法段 A/B 的 `test.fixme`）。
+  - Cornell 深度图集：亮度均值 **35.58** / 标准差 **60.35**；cascade 分层视图均值 111.11 / 标准差 108.77。
+  - 户外深度图集：均值 **23.21** / 标准差 **49.39**（LittlestTokyo 蒙皮模型 + 5 球 + 2 体块均可见）。
+  - 既有 HDR / G-buffer / Bloom / 户外 IBL / 白炉用例无回归（白炉仍 0.978 / -2.20%，户外 IBL A/B 仍 12.166）。
+- 截图：`e2e/screenshots/13-shadow-atlas.png`（Cornell 图集）、`14-shadow-cascade.png`（级联分层）、`15-shadow-atlas-outdoor.png`（户外蒙皮模型）、`18-shadow-page.png`（shadows 页面 + HUD）。
+
+### 遗留 / 下一步
+
+1. **自写 `shadowFactor()`**（作品集核心）：SM 比较 → 三种 bias → PCF → PCSS → 级联过渡。TODO 与自检点都写在 `gbuffer.frag` 函数上方。
+2. **启用算法段 A/B**：实现后把 `e2e/shadow.spec.ts` 的 `test.fixme` 改成 `test`，断言阴影开关产生可见差异。
+3. **CSM 稳定化**：texel snapping（相机移动时阴影边缘不游动）、级联间混合。
+4. **VSM**：额外 moment RT + 可分离 blur pass；当前未接入。
+5. **alphaTest 投影**：透明片 / 树叶会投出实心影子；需要按材质设置 `MeshDepthMaterial.alphaTest/map` 或自定义深度材质。
+6. **性能**：在真实 GPU 上采 `shadow-map` 逐 pass GPU ms（1 / 2 / 4 级、1024² / 2048² / 4096²），补进性能故事。
+
+---
+
 ## 2026-10-19 · p0-assets 步骤 3：天空材质、白炉读数、演示模式与作品集文档
 
 ### 目标

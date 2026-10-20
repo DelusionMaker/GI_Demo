@@ -183,7 +183,8 @@ export class Pipeline {
     for (const pass of chain) {
       const width = Math.max(1, Math.round(this.width * pass.scale))
       const height = Math.max(1, Math.round(this.height * pass.scale))
-      const target = pass.toScreen ? null : this.acquire(pass, width, height)
+      // selfManaged：pass 自带渲染目标（阴影图集等），Pipeline 不分配也不回收
+      const target = pass.toScreen || pass.selfManaged ? null : this.acquire(pass, width, height)
 
       if (target?.depthTexture) this.inputDepth = target.depthTexture
       // 暂存 G-buffer MRT，供调试视图（S3）与后续 SSR / SSGI 读取（仅在真正启用 MRT 时）

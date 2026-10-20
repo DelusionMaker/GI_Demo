@@ -74,6 +74,10 @@ export function GltfScene({ url, fit, position = ORIGIN }: GltfSceneProps) {
       } else if (mesh.material) {
         mesh.material = convert(mesh.material)
       }
+      // p1-shadow：ShadowMapPass 用 castShadow 标记筛选投影物；
+      // 资产默认两者都开（地面/天空球在各自场景里单独控制）。
+      mesh.castShadow = true
+      mesh.receiveShadow = true
     })
 
     if (fit) {

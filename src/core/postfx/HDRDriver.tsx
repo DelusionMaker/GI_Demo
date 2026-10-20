@@ -2,8 +2,15 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { capabilitiesStore } from '../capabilities'
 import { HDRPipeline } from './HDRPipeline'
-import { hdrParams, resolveDebugPass, resolveGBufferDebug } from './hdrParams'
+import {
+  hdrParams,
+  resolveDebugPass,
+  resolveGBufferDebug,
+  resolveShadowAtlasDebug,
+  resolveShadowCascadeDebug,
+} from './hdrParams'
 import { hdrStore } from './hdrStore'
+import { shadowParams } from './shadowParams'
 
 /** 统计推送节流：与 perfStore 的 5Hz 采样一致，避免每帧触发重渲染 */
 const STATS_INTERVAL_MS = 200
@@ -58,11 +65,41 @@ export function HDRDriver() {
 
     // UI 旋钮 → 渲染核心（渲染核心不认识 MobX）
     core.bypass = knobs.bypass
-    // 调试视图两条路径：G-buffer 数据视图（直接出屏原始附件）/ 按 pass 名截断。
+
+    // 调试视图三条路径：
+    //   1) G-buffer 附件直接出屏；2) 阴影深度图集直接出屏；3) 按 pass 名截断。
     // 无 MRT 时忽略 URL 里遗留的 gbuffer 参数，避免选到黑屏（gBuffer 为 null）
     const gbufferDebug = capabilitiesStore.mrt ? resolveGBufferDebug(knobs.hdrDebug) : null
+    const shadowAtlasDebug = resolveShadowAtlasDebug(knobs.hdrDebug)
+    const shadowCascadeDebug = resolveShadowCascadeDebug(knobs.hdrDebug)
     pipeline.setGBufferDebug(gbufferDebug)
-    core.debugPass = gbufferDebug === null ? resolveDebugPass(knobs.hdrDebug) : null
+    pipeline.setShadowAtlasDebug(shadowAtlasDebug)
+    pipeline.shadow.debugCascade = shadowCascadeDebug
+    core.debugPass =
+      gbufferDebug === null && !shadowAtlasDebug && !shadowCascadeDebug
+        ? resolveDebugPass(knobs.hdrDebug)
+        : null
+
+    // p1-shadow 旋钮 → ShadowMapPass（图集 / CSM / bias / 采样参数）。
+    // 两个调试视图会强制渲染图集，即使「实时阴影」开关是关的。
+    const shadowKnobs = shadowParams.params
+    pipeline.shadow.enabled =
+      shadowKnobs.shadow || shadowAtlasDebug || shadowCascadeDebug
+    pipeline.shadow.applyShadows = shadowKnobs.shadow
+    pipeline.shadow.mode = shadowKnobs.shadowMode
+    pipeline.shadow.cascadeCount = shadowKnobs.shadowCascades
+    pipeline.shadow.atlasSize = shadowKnobs.shadowMapSize
+    pipeline.shadow.maxDistance = shadowKnobs.shadowDistance
+    pipeline.shadow.biasMode = shadowKnobs.shadowBiasMode
+    pipeline.shadow.bias = shadowKnobs.shadowBias
+    pipeline.shadow.normalBias = shadowKnobs.shadowNormalBias
+    pipeline.shadow.pcfRadius = shadowKnobs.shadowPCFRadius
+    pipeline.shadow.lightSize = shadowKnobs.shadowLightSize
+    pipeline.shadow.strength = shadowKnobs.shadowStrength
+    // 旁路整链时不会执行 shadow-map pass，这里先把 uShadowEnabled 清零，
+    // 避免直出路径采到上一帧的图集。
+    pipeline.shadow.syncUniforms(core.bypass)
+
     pipeline.setTonemap(knobs.tm)
     pipeline.setClipView(knobs.clipView)
 

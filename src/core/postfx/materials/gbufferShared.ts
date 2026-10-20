@@ -36,4 +36,38 @@ export const gbufferShared = {
   uHasEnv: { value: 0 },
   /** 1 = 白炉测试：环境视为纯白、直接光关闭（能量守恒验证） */
   uFurnace: { value: 0 },
+
+  // ── 阴影（p1-shadow；ShadowMapPass 每帧写入）──
+  /** 1 = 在 gbuffer.frag 里应用阴影（shadowFactor）；0 = 跳过（直接光不压暗） */
+  uShadowEnabled: { value: 0 },
+  /** 深度图集（DepthTexture，RGBA8 颜色附件不参与采样） */
+  uShadowAtlas: { value: null as THREE.Texture | null },
+  /**
+   * 每级级联的 worldPos → 图集 UV + 深度矩阵（已含 tile 变换）。
+   * 数组长度固定 4，未使用的槽位为上一帧残留，shader 用 uShadowCascadeCount 限界。
+   */
+  uShadowMatrices: {
+    value: Array.from({ length: 4 }, () => new THREE.Matrix4()),
+  },
+  /** 各级级联的 view-space far（未使用的槽位填最后一个有效值） */
+  uShadowSplits: { value: new THREE.Vector4(1, 1, 1, 1) },
+  uShadowCascadeCount: { value: 0 },
+  /** 图集布局（cols, rows），供调试视图画分块边框 */
+  uShadowAtlasGrid: { value: new THREE.Vector2(1, 1) },
+  /** 1 / 图集边长（UV 空间一个纹素） */
+  uShadowTexelSize: { value: 1 / 2048 },
+  uShadowAtlasSize: { value: 2048 },
+  /** 0 = SM / 1 = PCF / 2 = PCSS，与 shadowTypes.ts 的 SHADOW_MODE_INDEX 一致 */
+  uShadowMode: { value: 1 },
+  /** 0 = none / 1 = constant / 2 = normal offset / 3 = slope，与 SHADOW_BIAS_INDEX 一致 */
+  uShadowBiasMode: { value: 2 },
+  uShadowBias: { value: 0.0008 },
+  uShadowNormalBias: { value: 0.02 },
+  uShadowPCFRadius: { value: 1.5 },
+  /** PCSS 半影尺度（UV 空间近似；按光源世界尺寸 / 场景尺度调） */
+  uShadowLightSize: { value: 0.03 },
+  /** 阴影强度：1 = 全黑，0 = 不压暗 */
+  uShadowStrength: { value: 1 },
+  /** 1 = 调试：把 cascade 索引染成色块（gbuffer.frag 内分支） */
+  uShadowDebugCascade: { value: 0 },
 }

@@ -69,31 +69,31 @@ export function CornellBox() {
   return (
     <group>
       {/* 地板（官方 y = 0，法线 +y） */}
-      <mesh rotation-x={-Math.PI / 2}>
+      <mesh rotation-x={-Math.PI / 2} receiveShadow>
         <planeGeometry args={[ROOM_X, ROOM_Z]} />
         <primitive object={materials.white} attach="material" />
       </mesh>
 
       {/* 天花板（官方 y = 548.8，法线 -y） */}
-      <mesh position={[0, ROOM_Y, 0]} rotation-x={Math.PI / 2}>
+      <mesh position={[0, ROOM_Y, 0]} rotation-x={Math.PI / 2} receiveShadow>
         <planeGeometry args={[ROOM_X, ROOM_Z]} />
         <primitive object={materials.white} attach="material" />
       </mesh>
 
       {/* 后墙（官方 z = 559.2，法线 -z，朝向相机） */}
-      <mesh position={[0, ROOM_Y / 2, HALF_Z]} rotation-y={Math.PI}>
+      <mesh position={[0, ROOM_Y / 2, HALF_Z]} rotation-y={Math.PI} receiveShadow>
         <planeGeometry args={[ROOM_X, ROOM_Y]} />
         <primitive object={materials.white} attach="material" />
       </mesh>
 
       {/* 绿墙（官方 x = 0，世界 -x，相机朝 +z 看时位于画面右侧；法线 +x 朝内） */}
-      <mesh position={[-HALF_X, ROOM_Y / 2, 0]} rotation-y={Math.PI / 2}>
+      <mesh position={[-HALF_X, ROOM_Y / 2, 0]} rotation-y={Math.PI / 2} receiveShadow>
         <planeGeometry args={[ROOM_Z, ROOM_Y]} />
         <primitive object={materials.green} attach="material" />
       </mesh>
 
       {/* 红墙（官方 x = 552.8，世界 +x，画面左侧；法线 -x 朝内） */}
-      <mesh position={[HALF_X, ROOM_Y / 2, 0]} rotation-y={-Math.PI / 2}>
+      <mesh position={[HALF_X, ROOM_Y / 2, 0]} rotation-y={-Math.PI / 2} receiveShadow>
         <planeGeometry args={[ROOM_Z, ROOM_Y]} />
         <primitive object={materials.red} attach="material" />
       </mesh>
@@ -108,6 +108,8 @@ export function CornellBox() {
       <mesh
         position={[cx(185.5), 82.5 * S, cz(169.0)]}
         rotation-y={THREE.MathUtils.degToRad(-16.6)}
+        castShadow
+        receiveShadow
       >
         <boxGeometry args={[1.65, 1.65, 1.65]} />
         <primitive object={materials.white} attach="material" />
@@ -117,6 +119,8 @@ export function CornellBox() {
       <mesh
         position={[cx(368.5), 165 * S, cz(351.25)]}
         rotation-y={THREE.MathUtils.degToRad(17.0)}
+        castShadow
+        receiveShadow
       >
         <boxGeometry args={[1.65, 3.3, 1.65]} />
         <primitive object={materials.white} attach="material" />

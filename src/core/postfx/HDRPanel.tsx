@@ -37,13 +37,22 @@ export const HDRPanel = observer(function HDRPanel() {
       ]
     : []
 
+  // p1-shadow：深度图集 / cascade 分层。两者都不是「按 pass 截断」，
+  // 由 HDRDriver 分流到 ShadowDebugPass 或 gbuffer.frag 的调试分支。
+  const shadowOptions: SelectOption<string>[] = [
+    { value: 'shadow:atlas', label: '阴影 · 深度图集' },
+    { value: 'shadow:cascade', label: '阴影 · cascade 分层' },
+  ]
+
   const debugOptions: SelectOption<string>[] = [
     { value: 'none', label: '完整链路' },
-    // gbuffer-debug 是调试出口本身，不作为「截断点」出现在下拉里
+    // 两个调试出口本身不作为「截断点」；shadow-map 是辅助 pass，
+    // 截断到它没有可呈现的主链颜色（会得到黑屏）。
     ...runtime.passNames
-      .filter((name) => name !== 'gbuffer-debug')
+      .filter((name) => name !== 'gbuffer-debug' && name !== 'shadow-debug' && name !== 'shadow-map')
       .map((name) => ({ value: name, label: `仅到 ${name} 为止` })),
     ...gbufferOptions,
+    ...shadowOptions,
   ]
 
   return (

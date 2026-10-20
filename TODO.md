@@ -69,7 +69,7 @@ npm run build      # 生产构建
 ### 阶段 1 · 直接光照（2–3 周）
 
 - [x] **p1-pbr-ibl** PBR（Cook-Torrance / GGX + Smith + Schlick）+ IBL（split-sum）+ 白炉测试　**核心完成（2026-10-19）**：`gbuffer.frag` 的 `iblDiffuse` / `iblSpecular` 已实现（roughness→LOD + Karis EnvBRDFApprox + 白炉分支）；真实灯光 / CubeCamera 环境贴图 / 白炉开关已接通。2026-10-19 修复了 `tEnvMap` / `uEnvMap` 命名不一致（环境贴图才真正绑定）与漫反射 π 归一化；白炉 HUD 读数实测 **0.978 / -2.2%**，Playwright 已加回归（目标 ±2%，略超，见 DEVLOG）。可选收口：`env` 默认切 `true`、GGX 重要性采样预滤波、±2% 收紧
-- [ ] **p1-shadow** 阴影全家桶（SM / PCF / PCSS / CSM / VSM + 三种 bias 补偿）
+- [~] **p1-shadow** 阴影全家桶（SM / PCF / PCSS / CSM / VSM + 三种 bias 补偿）　**骨架完成（2026-10-20）**：`ShadowMapPass` 每帧生成 1–4 级 CSM 深度图集（2048² 默认；单级联按投影物包围球收紧），共享 uniform / `ShadowPanel` / 深度图集与 cascade 调试视图 / e2e 已就位。`gbuffer.frag` 的 `shadowFactor()`（SM / PCF / PCSS）、三种 bias 应用、级联过渡留作**自写段**（文件内 `TODO(p1-shadow · 你来写)`）；VSM 需额外 moment RT + blur pass，未接入。
 - [ ] **p1-light-ssr** 多光源与剔除（Forward / Deferred / Clustered 三档）+ SSR
 
 ### 阶段 2 · 观感增量（2–3 周）
@@ -398,7 +398,68 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 
 ---
 
-## 五、参考：规划约束
+## 五、p1-shadow 拆解（骨架已就位，算法段自写）
+
+### 5.0 目标与分工
+
+把「阴影」从 three 内建能力变成**自写可见性计算**：主平行光视角渲染深度图集 → 在 `gbuffer.frag` 里比较深度并做过滤。
+
+- **框架部分（已完成，2026-10-20）**：深度图集 / CSM 切分 / 光源相机拟合 / uniform 管线 / UI / 调试视图 / e2e。
+- **自写部分（TODO）**：`gbuffer.frag` 的 `shadowFactor()` —— SM 深度比较、PCF 核、PCSS blocker search + 半影、三种 bias 补偿、级联过渡。
+
+> 这条分工与 p0-hdr / p1-pbr-ibl 一致：框架保证「链路能跑、中间量可见、参数可复现」，算法数学留给自己写并在面试里讲。
+
+### 5.1 已就位
+
+| 文件 | 职责 |
+| --- | --- |
+| `postfx/passes/ShadowMapPass.ts` | 链首辅助 pass：找主平行光 → 拟合正交相机 → 1–4 级 CSM 渲进深度图集；写共享 uniform；单级联按投影物包围球收紧 |
+| `postfx/Pass.ts` / `Pipeline.ts` | 新增 `selfManaged`：pass 自带 RT，Pipeline 不分配 / 不回收（阴影图集不污染 RT 池） |
+| `postfx/materials/gbufferShared.ts` | `uShadowAtlas` / `uShadowMatrices[4]` / `uShadowSplits` / 算法与 bias 参数 / 强度 / 调试开关 |
+| `postfx/shaders/gbuffer.frag` | `shadowCascadeIndex()`（已实现）+ `shadowFactor()`（TODO）；直接光乘可见性；cascade 分层调试分支 |
+| `postfx/passes/ShadowDebugPass.ts` + `shaders/shadow-debug.frag` | 深度图集全屏调试视图（橙色 tile 边框，未用 tile 压暗） |
+| `postfx/shadowTypes.ts` / `shadowParams.ts` / `ShadowPanel.tsx` | 算法 / 级联 / 贴图 / bias / 采样参数，全部进 URL |
+| `postfx/HDRPipeline.ts` / `HDRDriver.tsx` / `HDRPanel.tsx` | 挂链、每帧同步、三个 toScreen 出口互斥、调试视图下拉 |
+| `core/scene/CornellBox.tsx` / `GltfScene.tsx` | 补 `castShadow` / `receiveShadow`（Cornell 两块方块、LittlestTokyo） |
+| `demos/hello-cube/index.tsx` / `demos/index.ts` | `shadows` 页面：Cornell + 阴影开启 + 技术模式 |
+| `e2e/shadow.spec.ts` | 图集非空 / cascade 分层可见 / 户外蒙皮模型进图集 / 参数回填 |
+
+### 5.2 待自写算法（按建议顺序）
+
+1. **SM**：`shadowCascadeIndex` → `uShadowMatrices[ci] * worldPos` → 深度比较。越界返回 1.0（级联外不压暗）。
+2. **三种 bias**：常数深度偏移 / 法线偏移 / 斜率缩放，用 `uShadowBiasMode` 分支做 A/B；验收是 Cornell 方块底面无 acne、接触处不脱落。
+3. **PCF**：以 `uShadowTexelSize * uShadowPCFRadius` 为步长取 3×3 / 5×5（或泊松盘），平均可见性。
+4. **PCSS**：blocker search（统计 `sceneDepth < coord.z` 的样本）→ 平均遮挡深度 → 半影宽度 `(coord.z - avgBlockerDepth) * uShadowLightSize` → 可变半径 PCF。
+5. **级联过渡**：相邻级联各采一次，按 viewDepth 在切分点附近线性混合。
+6. **可选**：VSM（moment RT + 可分离 blur；需新增一个 blur pass 与两张 moment RT）。
+
+所有 TODO 都在 `src/core/postfx/shaders/gbuffer.frag` 的 `shadowFactor()` 上方，含自检点。
+
+### 5.3 验收清单
+
+- [x] 深度图集真实生成（`shadow:atlas` 非空；Cornell 三个投影物清晰可见）
+- [x] 1–4 级 CSM 的切分矩阵与 tile 变换写入 shader
+- [x] outdoor 的蒙皮模型（LittlestTokyo）能进深度图集
+- [x] 参数进 URL（`?shadow=1&shadowMode=pcss&shadowCascades=4&shadowMapSize=1024`）
+- [x] 关闭阴影 / 未实现算法段时，画面与接入前一致（`shadowFactor` 占位返回 1.0）
+- [x] `npm run typecheck` / `npm run build` / `npm run smoke` 通过
+- [ ] **自写段**：SM / PCF / PCSS 三档产生可见且正确的阴影（`e2e/shadow.spec.ts` 的 `test.fixme` 实现后启用）
+- [ ] **自写段**：三种 bias 的 acne / peter-panning 对照可复现
+- [ ] **自写段**：2 / 4 级级联在边界无明显接缝
+- [ ] VSM（可选，需新增 moment + blur pass）
+
+### 5.4 已知取舍
+
+- **投影物筛选**：逐帧 `traverse` + 临时 `visible=false`，demo 规模足够；生产应改 layer 掩码 / 渲染列表缓存。
+- **alphaTest 投影**：未处理，LittlestTokyo 的透明片会投出实心影子。
+- **单级联拟合**：默认按投影物包围球收紧（否则 40 单位视锥切片会让图集 95% 是空的）；代价是视锥外、但沿光源方向能投影进画面的物体不被收进来。多级联仍按视锥切片。
+- **CSM 稳定化**：未做 texel snapping，相机移动时阴影边缘会游动（TODO 已在 `fitCascade()` 标注）。
+- **阴影只压暗直接光**：IBL / 环境项不受影响；AO 属 `p2-gtao`。
+- **性能**：图集默认 2048²、每帧重渲；阴影关闭时 pass 不参与链路。GPU 时间可在性能面板逐 pass 归因（`shadow-map` 一行）。
+
+---
+
+## 六、参考：规划约束
 
 ### 推荐主线组合（6 个成品）
 

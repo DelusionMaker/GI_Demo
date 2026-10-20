@@ -34,6 +34,25 @@ uniform float uEnvIntensity; // 环境强度倍率
 uniform int uHasEnv;         // 1 = 环境贴图就绪且开关打开
 uniform int uFurnace;        // 1 = 白炉测试：环境视为纯白、直接光关闭
 
+// ── 阴影（p1-shadow；ShadowMapPass 每帧写入，见 gbufferShared.ts）──
+uniform sampler2D uShadowAtlas;   // 深度图集（DepthTexture 的 .r）
+uniform mat4 uShadowMatrices[4];  // worldPos → 图集 UV(xy) + 归一化深度(z)，已含 tile 变换
+uniform vec4 uShadowSplits;       // 各级级联的 view-space far
+uniform int uShadowCascadeCount;  // 1–4；0 = 本帧没有阴影贴图
+uniform float uShadowTexelSize;   // 1 / 图集边长（UV 空间一个纹素）
+uniform float uShadowAtlasSize;   // 图集边长（像素）
+uniform int uShadowEnabled;       // 1 = 应用阴影
+uniform int uShadowMode;          // 0 = SM / 1 = PCF / 2 = PCSS
+uniform int uShadowBiasMode;      // 0 = none / 1 = constant / 2 = normal / 3 = slope
+uniform float uShadowBias;        // 常数深度偏移
+uniform float uShadowNormalBias;  // 法线偏移（世界单位）
+uniform float uShadowPCFRadius;   // PCF 半径（纹素）
+uniform float uShadowLightSize;   // PCSS 半影尺度（UV 近似）
+uniform float uShadowStrength;    // 1 = 全黑阴影，0 = 不压暗
+uniform int uShadowDebugCascade;  // 1 = 输出 cascade 色块（中间量视图）
+
+uniform mat4 viewMatrix; // three 按名自动上传；级联选择需要 view-space 深度
+
 in vec3 vWorldNormal;
 in vec3 vWorldPos;
 in vec2 vUv;
@@ -121,6 +140,85 @@ vec3 iblSpecular(vec3 N, vec3 V, vec3 F0, float roughness) {
   return prefiltered * dfg;
 }
 
+// ==========================================================================
+// 阴影（p1-shadow）—— 骨架已就位，算法段留给你写
+// ==========================================================================
+
+/**
+ * 按 view-space 深度选择级联。
+ * 返回 0–3；-1 = 超出最后一级阴影距离（应视为完全受光）。
+ *
+ * 这一步是纯记账（比较切分距离），框架已实现；真正需要自写的是下面的
+ * shadowFactor()。注意：不检查 uShadowEnabled，这样「cascade 分层」调试视图
+ * 在关闭阴影时也能看到覆盖范围。
+ */
+int shadowCascadeIndex(vec3 worldPos) {
+  if (uShadowCascadeCount <= 0) return -1;
+  float viewDepth = -(viewMatrix * vec4(worldPos, 1.0)).z;
+  if (viewDepth <= uShadowSplits.x) return 0;
+  if (uShadowCascadeCount > 1 && viewDepth <= uShadowSplits.y) return 1;
+  if (uShadowCascadeCount > 2 && viewDepth <= uShadowSplits.z) return 2;
+  if (uShadowCascadeCount > 3 && viewDepth <= uShadowSplits.w) return 3;
+  return -1;
+}
+
+// ==========================================================================
+// TODO(p1-shadow · 你来写)：返回 [0,1] 的阴影可见性（1 = 完全受光）
+//
+// 框架已经准备好的原料：
+//   - shadowCascadeIndex(worldPos)            级联选择（已实现）
+//   - uShadowMatrices[ci]                     worldPos → 图集 UV + 深度
+//                                             （xy 已含 tile 变换，z ∈ [0,1]）
+//   - uShadowAtlas / uShadowTexelSize         深度图集与纹素尺寸
+//   - uShadowMode / uShadowBiasMode / 各参数  面板旋钮
+//
+// 建议实现顺序（每一步都能在 HUD / 调试视图里验证）：
+//   0) SM：int ci = shadowCascadeIndex(worldPos);
+//      if (ci < 0) return 1.0;
+//      vec4 clip = uShadowMatrices[ci] * vec4(worldPos, 1.0);
+//      vec3 coord = clip.xyz / clip.w;          // 正交光相机 w = 1
+//      coord.xy 超出 [0,1] 或 coord.z 超出 [0,1] → 1.0（级联外不压暗）
+//      float sceneDepth = texture(uShadowAtlas, coord.xy).r;
+//      visibility = (coord.z <= sceneDepth + bias) ? 1.0 : 0.0;
+//
+//   1) 三种 bias 补偿（用 uShadowBiasMode 分支，做 A/B 对照）：
+//      - constant：coord.z -= uShadowBias
+//      - normal  ：投影前 worldPos += N * uShadowNormalBias
+//      - slope   ：偏移量随 NoL 变小而增大（如 uShadowBias * tan(acos(NoL))）
+//      目标：Cornell 方块底面无 acne；接触处不脱落（peter-panning）。
+//      这一项是作品集最好的「同一算法三种取舍」叙事，别只留一种。
+//
+//   2) PCF（uShadowMode == 1）：
+//      以 coord.xy 为中心，按 uShadowTexelSize * uShadowPCFRadius 取
+//      3×3 / 5×5（或泊松盘）样本，逐样本比较后取平均可见性。
+//      采样数写死便于对照；半径滑块只改变偏移，不改循环次数。
+//
+//   3) PCSS（uShadowMode == 2）：
+//      blocker search：在 UV 邻域内统计 sceneDepth < coord.z 的样本，
+//                      求平均遮挡深度 avgBlockerDepth，计数为 0 → 1.0；
+//      penumbra：宽度 ≈ (coord.z - avgBlockerDepth) * uShadowLightSize；
+//      用该宽度做可变半径 PCF（宽度越大样本越分散，可限制最大半径）。
+//      自检：遮挡物越远，半影越宽（近硬远软）。
+//
+//   4) 级联过渡：硬切会在级联边界留下接缝。可对相邻级联各采样一次，
+//      按 viewDepth 在切分点附近的窗口内线性混合。
+//
+//   5) 最后：return mix(1.0, visibility, uShadowStrength); 
+//
+// 自检点：
+//   - 关闭阴影 / 超出阴影距离时，画面应与接入前逐像素一致；
+//   - Cornell：bias 从小往大扫，先出现 acne、后出现 peter-panning；
+//   - PCF 半径增大边缘变软，GPU 时间线性上升（性能面板逐 pass 归因）；
+//   - 2 级 / 4 级级联时，「cascade 分层」调试视图能看出覆盖范围与接缝。
+// ==========================================================================
+float shadowFactor(vec3 N, vec3 L, vec3 worldPos) {
+  if (uShadowEnabled == 0) return 1.0;
+
+  // 骨架占位：先返回全亮，保证整条链在算法实现前可跑、可测、可截图。
+  // TODO(p1-shadow · 你来写)：用上面的原料实现 SM / PCF / PCSS，然后删掉这一行。
+  return 1.0;
+}
+
 void main() {
   // baseColor 贴图 + alphaTest 必须在写 MRT 之前完成：
   // MASK 材质（树叶 / 栏杆）若裁切晚了，gAlbedo / gNormal / gMRAO 会先被写脏。
@@ -162,6 +260,19 @@ void main() {
     return;
   }
 
+  // ── 调试：cascade 分层着色（中间量视图）──
+  // 每个级联一个颜色，超出阴影距离的像素压暗；用于检查 CSM 覆盖范围与接缝。
+  if (uShadowDebugCascade == 1) {
+    int ci = shadowCascadeIndex(vWorldPos);
+    vec3 tint = vec3(0.08, 0.09, 0.11);
+    if (ci == 0) tint = vec3(0.98, 0.42, 0.30);
+    else if (ci == 1) tint = vec3(0.35, 0.78, 0.98);
+    else if (ci == 2) tint = vec3(0.52, 0.90, 0.45);
+    else if (ci == 3) tint = vec3(0.95, 0.86, 0.35);
+    gAlbedo = vec4(tint, 1.0);
+    return;
+  }
+
   // ── gAlbedo：Cook-Torrance 直接光（前向 PBR，gAlbedo = 最终着色）──
   // viewDir 计算当前片元指向相机的方向
   vec3 V = normalize(cameraPosition - vWorldPos);   // three 已按名上传 cameraPosition
@@ -185,7 +296,9 @@ void main() {
 
   vec3 diffuse  = kD * albedo / PI; // kD是给漫反射项乘的权重系数
 
-  vec3 direct = (diffuse + specular) * uLightColor * NoL;
+  // 阴影只压暗直接光；IBL / 环境项保持原样（AO 属 p2-gtao 的范围）。
+  float visibility = shadowFactor(N, L, vWorldPos);
+  vec3 direct = (diffuse + specular) * uLightColor * NoL * visibility;
 
   // 白炉测试：关掉直接光，只留环境（环境在 ibl* 内视为纯白）
   if (uFurnace == 1) direct = vec3(0.0);

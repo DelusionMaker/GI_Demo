@@ -6,6 +6,8 @@ import { TonemapOutputPass } from './passes/TonemapOutputPass'
 import { LuminancePass } from './passes/LuminancePass'
 import { BloomPass } from './passes/BloomPass'
 import { GBufferDebugPass } from './passes/GBufferDebugPass'
+import { ShadowMapPass } from './passes/ShadowMapPass'
+import { ShadowDebugPass } from './passes/ShadowDebugPass'
 import type { PassTiming } from './Pass'
 
 export type { PassTiming }
@@ -73,6 +75,9 @@ export class HDRPipeline {
   private readonly bloomPass = new BloomPass()
   private readonly output = new TonemapOutputPass()
   private readonly gbufferDebugPass = new GBufferDebugPass()
+  /** p1-shadow：渲染深度图集（链首，beauty 采样其产物） */
+  private readonly shadowPass = new ShadowMapPass()
+  private readonly shadowDebugPass: ShadowDebugPass
 
   private static warnedFallback = false
 
@@ -81,6 +86,8 @@ export class HDRPipeline {
     // OES_texture_float_linear（那是 32F 才需要），正好绕开该限制。
     this.hdrSupported = capabilitiesStore.colorBufferFloat
     if (options.samples !== undefined) this.beauty.target.samples = options.samples
+    // 调试出口共享同一个 ShadowMapPass（读它的深度图集）
+    this.shadowDebugPass = new ShadowDebugPass(this.shadowPass)
 
     // GPU 计时只在设备支持 EXT_disjoint_timer_query_webgl2 时开启（capabilities 已探测）
     this.pipeline = new Pipeline({
@@ -88,13 +95,16 @@ export class HDRPipeline {
       gpuTiming: capabilitiesStore.timerQuery,
       mrt: capabilitiesStore.mrt,
     })
+    // 阴影贴图必须最先跑：beauty（gbuffer.frag）要采样本帧的深度图集
+    this.pipeline.addPass(this.shadowPass)
     this.pipeline.addPass(this.beauty)
     this.pipeline.addPass(this.luminancePass)
     this.pipeline.addPass(this.bloomPass)
     this.pipeline.addPass(this.output)
-    // 调试出口放在最后：仅当 setGBufferDebug() 选中某个 G-buffer 附件时启用，
+    // 调试出口放在最后：仅当 setGBufferDebug() / setShadowAtlasDebug() 选中时启用，
     // 此时 tonemap-output 会被同时关闭（互斥，保证只有一个 toScreen pass）
     this.pipeline.addPass(this.gbufferDebugPass)
+    this.pipeline.addPass(this.shadowDebugPass)
     this.pipeline.setSize(width, height)
 
     // 默认值：EV=0（exp2(0)=1 直通）、线性曲线
@@ -146,12 +156,28 @@ export class HDRPipeline {
   setGBufferDebug(attachment: number | null): void {
     this.gbufferDebugPass.enabled = attachment !== null
     if (attachment !== null) this.gbufferDebugPass.attachment = attachment
-    this.output.enabled = attachment === null
+    this.updateOutputEnabled()
+  }
+
+  /** 阴影深度图集调试视图（p1-shadow；与 tonemap-output / G-buffer 调试互斥） */
+  setShadowAtlasDebug(enabled: boolean): void {
+    this.shadowDebugPass.enabled = enabled
+    this.updateOutputEnabled()
+  }
+
+  /** 保证同一帧只有一个 toScreen 出口 */
+  private updateOutputEnabled(): void {
+    this.output.enabled = !this.gbufferDebugPass.enabled && !this.shadowDebugPass.enabled
   }
 
   /** 自动曝光测光 pass（驱动组件据此隔帧回读 → 自动 EV + 直方图） */
   get luminance(): LuminancePass {
     return this.luminancePass
+  }
+
+  /** p1-shadow：驱动组件据此同步旋钮 / 开关，调试视图也读它 */
+  get shadow(): ShadowMapPass {
+    return this.shadowPass
   }
 
   /** Bloom pass（驱动组件据此开关 enabled / 设置 intensity / threshold / knee） */

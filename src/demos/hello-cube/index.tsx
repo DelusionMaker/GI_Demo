@@ -13,8 +13,10 @@ import { Hud, HudHint, HudTitle } from '@/core/hud/Hud'
 import { PerfPanel } from '@/core/perf/PerfPanel'
 import { CanvasRoot } from '@/core/renderer/CanvasRoot'
 import { HDRPanel } from '@/core/postfx/HDRPanel'
+import { ShadowPanel } from '@/core/postfx/ShadowPanel'
 import { hdrStore } from '@/core/postfx/hdrStore'
 import { hdrParams } from '@/core/postfx/hdrParams'
+import { shadowParams } from '@/core/postfx/shadowParams'
 import { SceneAsset } from '@/core/scene/SceneAsset'
 import { SCENES, type SceneId } from '@/core/scene/scenes'
 import type { DemoModule } from '../types'
@@ -324,7 +326,10 @@ const PresentationControls = observer(function PresentationControls() {
   )
 })
 
-const Stage = observer(function Stage() {
+/** shadows 页面复用同一个 Stage，只改 HUD 文案与面板顺序 */
+type StageVariant = 'default' | 'shadows'
+
+const Stage = observer(function Stage({ variant = 'default' }: { variant?: StageVariant }) {
   const { scene, autopilot, presentation } = store.params
   const presets =
     scene === 'cornell' ? CORNELL_PRESETS : scene === 'outdoor' ? OUTDOOR_PRESETS : PLACEHOLDER_PRESETS
@@ -333,12 +338,20 @@ const Stage = observer(function Stage() {
   const keyLightPosition: [number, number, number] =
     scene === 'cornell' ? [3, 8, -6] : scene === 'outdoor' ? [8, 12, 6] : [4.5, 6, 3]
   const keyLightIntensity = scene === 'outdoor' ? 1.6 : 2.2
-  const presentationSubtitle =
-    scene === 'outdoor'
+
+  const shadowVariant = variant === 'shadows'
+  const presentationTitle = shadowVariant ? '实时阴影（骨架）' : '实时 PBR + IBL'
+  const presentationSubtitle = shadowVariant
+    ? '深度图集 + CSM 1–4 级已就位 · SM / PCF / PCSS 算法段待自写'
+    : scene === 'outdoor'
       ? 'Poly Haven HDRI · split-sum IBL · LittlestTokyo（~171k tri）'
       : scene === 'cornell'
         ? 'Cornell Box · 白炉能量守恒 · 三附件 G-buffer'
         : '三附件 G-buffer · Cook-Torrance · HDR 链'
+  const technicalTitle = shadowVariant ? '阴影全家桶（骨架）' : 'G-buffer MRT + 前向 PBR'
+  const technicalSubtitle = shadowVariant
+    ? '深度图集 / CSM / bias 参数已就位；可见性计算见 gbuffer.frag 的 shadowFactor TODO'
+    : '三附件 G-buffer（着色 / 法线 / MRAO）→ 自写 Cook-Torrance → HDR 链；调试视图可看中间量'
 
   return (
     <div className="stage">
@@ -366,7 +379,7 @@ const Stage = observer(function Stage() {
 
       {presentation ? (
         <Hud
-          topLeft={<HudTitle title="实时 PBR + IBL" subtitle={presentationSubtitle} />}
+          topLeft={<HudTitle title={presentationTitle} subtitle={presentationSubtitle} />}
           topRight={
             <button
               type="button"
@@ -382,18 +395,22 @@ const Stage = observer(function Stage() {
         />
       ) : (
         <Hud
-          topLeft={
-            <HudTitle
-              title="G-buffer MRT + 前向 PBR"
-              subtitle="三附件 G-buffer（着色 / 法线 / MRAO）→ 自写 Cook-Torrance → HDR 链；调试视图可看中间量"
-            />
-          }
+          topLeft={<HudTitle title={technicalTitle} subtitle={technicalSubtitle} />}
           topRight={<PerfPanel />}
           bottomLeft={
-            <>
-              <HDRPanel />
-              <DemoControls />
-            </>
+            shadowVariant ? (
+              <>
+                <ShadowPanel />
+                <HDRPanel />
+                <DemoControls />
+              </>
+            ) : (
+              <>
+                <HDRPanel />
+                <ShadowPanel />
+                <DemoControls />
+              </>
+            )
           }
           bottomRight={<HudHint>{CAMERA_HELP}</HudHint>}
         />
@@ -433,3 +450,35 @@ const PbrIblStage = observer(function PbrIblStage() {
 })
 
 export const pbrIblDemo: DemoModule = { Stage: PbrIblStage }
+
+/**
+ * p1-shadow 页面：默认 Cornell + 实时阴影 + 技术模式。
+ *
+ * Cornell 是阴影验收的标准场景（单主光、尺寸已知、可用于对照 bias / acne）；
+ * 技术模式直接展开 HDR / 阴影面板，评审打开就能切 SM / PCF / PCSS 与调试视图。
+ * 显式带 scene / shadow / tm 参数时不覆盖，保证链接可复现。
+ */
+const ShadowsStage = observer(function ShadowsStage() {
+  const [ready, setReady] = useState(false)
+
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search)
+    if (!query.has('scene')) {
+      store.set({ scene: 'cornell' })
+    }
+    if (!query.has('shadow')) {
+      shadowParams.set({ shadow: true })
+    }
+    if (!query.has('tm')) {
+      hdrParams.set({ tm: 'aces' })
+    }
+    if (!query.has('presentation')) {
+      store.set({ presentation: false })
+    }
+    setReady(true)
+  }, [])
+
+  return ready ? <Stage variant="shadows" /> : null
+})
+
+export const shadowDemo: DemoModule = { Stage: ShadowsStage }

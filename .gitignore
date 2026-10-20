@@ -10,6 +10,8 @@ bake-out
 
 # Playwright：报告与失败产物不入库；冒烟截图是验证产物，同样不入库
 test-results
+# 备用输出目录（test-results/ 被批量删除保护拦截时用 --output=test-results-* 另开）
+test-results-*
 playwright-report
 blob-report
 .playwright
