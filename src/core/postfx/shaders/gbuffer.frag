@@ -154,7 +154,7 @@ vec3 iblSpecular(vec3 N, vec3 V, vec3 F0, float roughness) {
  */
 int shadowCascadeIndex(vec3 worldPos) {
   if (uShadowCascadeCount <= 0) return -1;
-  float viewDepth = -(viewMatrix * vec4(worldPos, 1.0)).z;
+  float viewDepth = -(viewMatrix * vec4(worldPos, 1.0)).z; // viewMatrix 把世界坐标变换到相机空间
   if (viewDepth <= uShadowSplits.x) return 0;
   if (uShadowCascadeCount > 1 && viewDepth <= uShadowSplits.y) return 1;
   if (uShadowCascadeCount > 2 && viewDepth <= uShadowSplits.z) return 2;
@@ -210,13 +210,37 @@ int shadowCascadeIndex(vec3 worldPos) {
 //   - Cornell：bias 从小往大扫，先出现 acne、后出现 peter-panning；
 //   - PCF 半径增大边缘变软，GPU 时间线性上升（性能面板逐 pass 归因）；
 //   - 2 级 / 4 级级联时，「cascade 分层」调试视图能看出覆盖范围与接缝。
+// 出现问题：在没有 bias 的时候，会出现 shadow acne (自阴影)
 // ==========================================================================
 float shadowFactor(vec3 N, vec3 L, vec3 worldPos) {
   if (uShadowEnabled == 0) return 1.0;
 
-  // 骨架占位：先返回全亮，保证整条链在算法实现前可跑、可测、可截图。
+  // bias
+  float bias = 0.0;
+  vec3 samplePos = worldPos;
+  if (uShadowBiasMode == 1) {
+    bias = uShadowBias;
+  } else if (uShadowBiasMode == 2) {
+    samplePos += N * uShadowNormalBias;
+  } else if (uShadowBiasMode == 3) {
+
+  }
+
+  // SM
+  int ci = shadowCascadeIndex(worldPos);
+  if (ci < 0) return 1.0;
+
+  vec4 clip = uShadowMatrices[ci] * vec4(samplePos, 1.0);
+  vec3 coord = clip.xyz / clip.w;          // 正交光相机 w = 1
+
+  float sceneDepth = texture(uShadowAtlas, coord.xy).r;
+  float visibility = (coord.z <= sceneDepth + bias) ? 1.0 : 0.0;
+
+  
   // TODO(p1-shadow · 你来写)：用上面的原料实现 SM / PCF / PCSS，然后删掉这一行。
-  return 1.0;
+  return visibility;
+  // 骨架占位：先返回全亮，保证整条链在算法实现前可跑、可测、可截图。
+  // return 1.0;
 }
 
 void main() {
