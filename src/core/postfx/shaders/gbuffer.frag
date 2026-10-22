@@ -67,6 +67,8 @@ const float ENV_MAX_LOD = 8.0; // 256² cube → log2(256) = 8
 // 漫反射 IBL 的 irradiance 近似 LOD：越高 = 环境越"抹平"，越接近 cosine-weighted irradiance 的廉价近似。
 // 调参旋钮：环境高频细节越多越该调高；RoomEnvironment 这类平滑环境 7 即可。
 const float IBL_DIFFUSE_LOD = ENV_MAX_LOD - 1.0;
+// PCSS 阴影遮挡物采样次数
+const int BLOCKER_SAMPLES = 3;
 
 // 法线分布函数：GGX
 float distributionGGX(float NoH, float rough) {
@@ -162,6 +164,49 @@ int shadowCascadeIndex(vec3 worldPos) {
   return -1;
 }
 
+/** PCF 5 x 5 */
+float PCF(sampler2D shadowMap, vec3 coord, float bias) {
+  float sum = 0.0;
+  for (int i = -2; i <= 2; i++) {
+    for (int j = -2; j <= 2; j++) {
+      vec2 off = vec2(float(i), float(j)) * uShadowTexelSize * uShadowPCFRadius;
+      float pcfDepth = texture(shadowMap, coord.xy + off).r;
+      sum += (coord.z <= pcfDepth + bias) ? 1.0: 0.0;
+    }
+  }
+  return sum / 25.0;
+}
+
+/** PCSS */
+float PCSS(sampler2D shadowMap, vec3 coord, float bias) {
+  // STEP 1: 遮挡物搜索（Blocker Search） —— 在阴影里找平均遮挡深度
+  float avgBlockerDepth = 0.0, nBlockerDepth = 0.0;
+  for (int i = - BLOCKER_SAMPLES / 2; i < BLOCKER_SAMPLES / 2; i++){
+    for (int j = - BLOCKER_SAMPLES / 2; j < BLOCKER_SAMPLES / 2; j ++) {
+      vec2 off = vec2(float(i), float(j)) * uShadowTexelSize * uShadowLightSize;
+      float z = texture(shadowMap, coord.xy + off).r;
+      if(z < coord.z){ avgBlockerDepth += z; nBlockerDepth++; }
+    }
+  }
+  if(nBlockerDepth < 1.0) return 1.0;            // 没遮挡 → 全亮
+  avgBlockerDepth /= nBlockerDepth;
+
+  // STEP 2: 由相似三角形估算半影半径 w
+  float penumbra = (coord.z - avgBlockerDepth) * uShadowLightSize;
+
+  // STEP 3: 用半径 penumbra 做 PCF
+  float sum = 0.0;
+  for (int i = - BLOCKER_SAMPLES / 2; i < BLOCKER_SAMPLES / 2; i++){
+    for (int j = - BLOCKER_SAMPLES / 2; j < BLOCKER_SAMPLES / 2; j ++) {
+      vec2 off = vec2(float(i), float(j)) * uShadowTexelSize * uShadowLightSize;
+      float pcssDepth = texture(shadowMap, coord.xy + off).r;
+      sum += (coord.z < pcssDepth + bias) ? 1.0 : 0.0;
+    }
+  }
+    
+  return sum / (float(BLOCKER_SAMPLES + 1) * float(BLOCKER_SAMPLES + 1));
+}
+ 
 // ==========================================================================
 // TODO(p1-shadow · 你来写)：返回 [0,1] 的阴影可见性（1 = 完全受光）
 //
@@ -223,10 +268,10 @@ float shadowFactor(vec3 N, vec3 L, vec3 worldPos) {
   } else if (uShadowBiasMode == 2) {
     samplePos += N * uShadowNormalBias;
   } else if (uShadowBiasMode == 3) {
-
+    bias = uShadowBias * tan(acos(max(dot(N, L), 1e-4)));
   }
 
-  // SM
+  
   int ci = shadowCascadeIndex(worldPos);
   if (ci < 0) return 1.0;
 
@@ -234,11 +279,18 @@ float shadowFactor(vec3 N, vec3 L, vec3 worldPos) {
   vec3 coord = clip.xyz / clip.w;          // 正交光相机 w = 1
 
   float sceneDepth = texture(uShadowAtlas, coord.xy).r;
-  float visibility = (coord.z <= sceneDepth + bias) ? 1.0 : 0.0;
+  float visibility = 1.0;
 
-  
-  // TODO(p1-shadow · 你来写)：用上面的原料实现 SM / PCF / PCSS，然后删掉这一行。
-  return visibility;
+
+  if (uShadowMode == 0) { // SM
+    visibility = (coord.z <= sceneDepth + bias) ? 1.0 : 0.0;
+  } else if (uShadowMode == 1) { // PCF
+    visibility = PCF(uShadowAtlas, coord, bias);
+  } else if (uShadowMode == 2) { // PCSS
+    visibility = PCSS(uShadowAtlas, coord, bias);
+  }
+
+  return mix(1.0, visibility, uShadowStrength); 
   // 骨架占位：先返回全亮，保证整条链在算法实现前可跑、可测、可截图。
   // return 1.0;
 }
