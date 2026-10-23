@@ -36,6 +36,7 @@ uniform int uFurnace;        // 1 = 白炉测试：环境视为纯白、直接�
 
 // ── 阴影（p1-shadow；ShadowMapPass 每帧写入，见 gbufferShared.ts）──
 uniform sampler2D uShadowAtlas;   // 深度图集（DepthTexture 的 .r）
+uniform vec2 uShadowAtlasGrid;
 uniform mat4 uShadowMatrices[4];  // worldPos → 图集 UV(xy) + 归一化深度(z)，已含 tile 变换
 uniform vec4 uShadowSplits;       // 各级级联的 view-space far
 uniform int uShadowCascadeCount;  // 1–4；0 = 本帧没有阴影贴图
@@ -67,8 +68,6 @@ const float ENV_MAX_LOD = 8.0; // 256² cube → log2(256) = 8
 // 漫反射 IBL 的 irradiance 近似 LOD：越高 = 环境越"抹平"，越接近 cosine-weighted irradiance 的廉价近似。
 // 调参旋钮：环境高频细节越多越该调高；RoomEnvironment 这类平滑环境 7 即可。
 const float IBL_DIFFUSE_LOD = ENV_MAX_LOD - 1.0;
-// PCSS 阴影遮挡物采样次数
-const int BLOCKER_SAMPLES = 3;
 
 // 法线分布函数：GGX
 float distributionGGX(float NoH, float rough) {
@@ -177,38 +176,52 @@ float PCF(sampler2D shadowMap, vec3 coord, float bias) {
   return sum / 25.0;
 }
 
-/** PCSS */
+/** PCSS: blocker search + 可变半径 PCF */
 float PCSS(sampler2D shadowMap, vec3 coord, float bias) {
+  // 约束：TAPS 必须是奇数（配合 i <= TAPS/2），除数必须是 TAPS*TAPS。
+  // 之前 3 -> 4 taps/16、8 -> 81 taps/64 都是在这条上翻车。
+  const int TAPS = 5; // 5×5 = 25
+  const float SEARCH_RADIUS_TEXELS = 6.0; // blocker search 固定半径
+  const float MAX_PENUMBRA_TEXELS = 32.0;
+
   // STEP 1: 遮挡物搜索（Blocker Search） —— 在阴影里找平均遮挡深度
-  float avgBlockerDepth = 0.0, nBlockerDepth = 0.0;
-  for (int i = - BLOCKER_SAMPLES / 2; i < BLOCKER_SAMPLES / 2; i++){
-    for (int j = - BLOCKER_SAMPLES / 2; j < BLOCKER_SAMPLES / 2; j ++) {
-      vec2 off = vec2(float(i), float(j)) * uShadowTexelSize * uShadowLightSize;
-      float z = texture(shadowMap, coord.xy + off).r;
-      if(z < coord.z){ avgBlockerDepth += z; nBlockerDepth++; }
+  float avgBlockerDepth = 0.0;
+  float blockers = 0.0;
+  float searchStep = uShadowTexelSize * SEARCH_RADIUS_TEXELS / float(TAPS / 2);
+  for (int i = - TAPS / 2; i <= TAPS / 2; i++){
+    for (int j = - TAPS / 2; j <= TAPS / 2; j ++) {
+      float z = texture(shadowMap, coord.xy + vec2(float(i), float(j)) * searchStep ).r;
+      // vec2 off = vec2(float(i), float(j)) * uShadowTexelSize * uShadowLightSize;
+      // float z = texture(shadowMap, coord.xy + off).r;
+      if(z < coord.z - bias){ avgBlockerDepth += z; blockers += 1.0; }
     }
   }
-  if(nBlockerDepth < 1.0) return 1.0;            // 没遮挡 → 全亮
-  avgBlockerDepth /= nBlockerDepth;
+  if(blockers < 1.0) return 1.0;            // 没遮挡 → 全亮
+  avgBlockerDepth /= blockers;
 
   // STEP 2: 由相似三角形估算半影半径 w
-  float penumbra = (coord.z - avgBlockerDepth) * uShadowLightSize;
+  // float penumbra = (coord.z - avgBlockerDepth) * uShadowLightSize;
+  float radiusUV = (coord.z - avgBlockerDepth) * uShadowLightSize / max(avgBlockerDepth, 1e-3);
+  float radiusTexels = clamp(radiusUV * uShadowAtlasSize, 1.0, MAX_PENUMBRA_TEXELS);
 
   // STEP 3: 用半径 penumbra 做 PCF
   float sum = 0.0;
-  for (int i = - BLOCKER_SAMPLES / 2; i < BLOCKER_SAMPLES / 2; i++){
-    for (int j = - BLOCKER_SAMPLES / 2; j < BLOCKER_SAMPLES / 2; j ++) {
-      vec2 off = vec2(float(i), float(j)) * uShadowTexelSize * uShadowLightSize;
-      float pcssDepth = texture(shadowMap, coord.xy + off).r;
-      sum += (coord.z < pcssDepth + bias) ? 1.0 : 0.0;
+  float filterStep = uShadowTexelSize * radiusTexels / float(TAPS / 2);
+
+  for (int i = - TAPS / 2; i <= TAPS / 2; i++){
+    for (int j = - TAPS / 2; j <= TAPS / 2; j ++) {
+      // vec2 off = vec2(float(i), float(j)) * uShadowTexelSize * uShadowLightSize;
+      // float pcssDepth = texture(shadowMap, coord.xy + off).r;
+      float z = texture(shadowMap, coord.xy + vec2(float(i), float(j)) * filterStep).r;
+      sum += (coord.z - bias < z) ? 1.0 : 0.0;
     }
   }
-    
-  return sum / (float(BLOCKER_SAMPLES + 1) * float(BLOCKER_SAMPLES + 1));
+
+  return sum / (float(TAPS * TAPS));
 }
  
 // ==========================================================================
-// TODO(p1-shadow · 你来写)：返回 [0,1] 的阴影可见性（1 = 完全受光）
+// p1-shadow：返回 [0,1] 的阴影可见性（1 = 完全受光）
 //
 // 框架已经准备好的原料：
 //   - shadowCascadeIndex(worldPos)            级联选择（已实现）
@@ -268,9 +281,9 @@ float shadowFactor(vec3 N, vec3 L, vec3 worldPos) {
   } else if (uShadowBiasMode == 2) {
     samplePos += N * uShadowNormalBias;
   } else if (uShadowBiasMode == 3) {
-    bias = uShadowBias * tan(acos(max(dot(N, L), 1e-4)));
+    float NoL = clamp(dot(N, L), 0.05, 1.0);
+    bias = uShadowBias * tan(acos(NoL));
   }
-
   
   int ci = shadowCascadeIndex(worldPos);
   if (ci < 0) return 1.0;
@@ -278,11 +291,24 @@ float shadowFactor(vec3 N, vec3 L, vec3 worldPos) {
   vec4 clip = uShadowMatrices[ci] * vec4(samplePos, 1.0);
   vec3 coord = clip.xyz / clip.w;          // 正交光相机 w = 1
 
-  float sceneDepth = texture(uShadowAtlas, coord.xy).r;
+    // 深度越界检查
+  float tileSpan = 1.0 / max(uShadowAtlasGrid.x, uShadowAtlasGrid.y);
+  vec2 tileSize = vec2(tileSpan);
+  vec2 tileId = vec2(mod(float(ci), uShadowAtlasGrid.x),
+                    floor(float(ci) / uShadowAtlasGrid.x));
+  vec2 tileMin = tileId * tileSize;
+  vec2 tileMax = tileMin + tileSize;
+
+  if (coord.x < tileMin.x || coord.y < tileMin.y ||
+      coord.x >= tileMax.x || coord.y >= tileMax.y ||
+      coord.z < 0.0 || coord.z > 1.0) {
+    return 1.0;
+  }
+
+  // TODO: 优化 PCF / PCSS tile检查
   float visibility = 1.0;
-
-
   if (uShadowMode == 0) { // SM
+    float sceneDepth = texture(uShadowAtlas, coord.xy).r;
     visibility = (coord.z <= sceneDepth + bias) ? 1.0 : 0.0;
   } else if (uShadowMode == 1) { // PCF
     visibility = PCF(uShadowAtlas, coord, bias);
@@ -291,8 +317,6 @@ float shadowFactor(vec3 N, vec3 L, vec3 worldPos) {
   }
 
   return mix(1.0, visibility, uShadowStrength); 
-  // 骨架占位：先返回全亮，保证整条链在算法实现前可跑、可测、可截图。
-  // return 1.0;
 }
 
 void main() {

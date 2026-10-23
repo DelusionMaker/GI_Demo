@@ -431,19 +431,20 @@ export class ShadowMapPass implements Pass {
     // 把 tile 变换直接烘进矩阵，shader 侧拿到的 xy 就是图集 UV，少一步换算。
     const col = index % layout.cols
     const row = Math.floor(index / layout.cols)
-    const tileWidth = 1 / layout.cols
-    const tileHeight = 1 / layout.rows
-    const offsetU = col * tileWidth
-    const offsetV = row * tileHeight
+
+    // tile 永远是正方形：边长 = 1 / max(cols, rows)
+    const tileSpan = 1 / Math.max(layout.cols, layout.rows);
+    const offsetU = col * tileSpan;
+    const offsetV = row * tileSpan;
     this.tmpTileMatrix.set(
-      tileWidth * 0.5,
+      tileSpan * 0.5,
       0,
       0,
-      offsetU + tileWidth * 0.5,
+      offsetU + tileSpan * 0.5,
       0,
-      tileHeight * 0.5,
+      tileSpan * 0.5,
       0,
-      offsetV + tileHeight * 0.5,
+      offsetV + tileSpan * 0.5,
       0,
       0,
       0.5,
