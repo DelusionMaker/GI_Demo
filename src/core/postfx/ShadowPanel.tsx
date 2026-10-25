@@ -34,8 +34,8 @@ const MAP_SIZE_OPTIONS: SelectOption<MapSizeValue>[] = [
 /**
  * p1-shadow 控制面板。
  *
- * 骨架阶段这里只负责「把原料参数化」：图集由 ShadowMapPass 生成，
- * 可见性计算在 gbuffer.frag 的 shadowFactor()（TODO · 自写段）。
+ * 这里负责「把原料参数化」：图集由 ShadowMapPass 生成，
+ * 可见性计算在 gbuffer.frag 的 shadowFactor()（SM / PCF / PCSS + 三种 bias 已实现）。
  *
  * 调试视图入口在 HDR 面板的「调试视图」下拉：
  * - 阴影 · 深度图集（shadow:atlas）
@@ -48,7 +48,7 @@ export const ShadowPanel = observer(function ShadowPanel() {
     <Panel title="阴影" onReset={() => shadowParams.reset()}>
       <Toggle
         label="实时阴影"
-        hint="算法段待实现：shader 内 TODO(p1-shadow)"
+        hint="自写 shadowFactor：SM / PCF / PCSS + 三种 bias"
         value={p.shadow}
         onChange={(value) => shadowParams.set({ shadow: value })}
       />

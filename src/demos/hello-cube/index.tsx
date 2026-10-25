@@ -342,15 +342,15 @@ const Stage = observer(function Stage({ variant = 'default' }: { variant?: Stage
   const shadowVariant = variant === 'shadows'
   const presentationTitle = shadowVariant ? '实时阴影（骨架）' : '实时 PBR + IBL'
   const presentationSubtitle = shadowVariant
-    ? '深度图集 + CSM 1–4 级已就位 · SM / PCF / PCSS 算法段待自写'
+    ? '深度图集 + CSM 1–4 级 · 自写 SM / PCF / PCSS + 三种 bias'
     : scene === 'outdoor'
       ? 'Poly Haven HDRI · split-sum IBL · LittlestTokyo（~171k tri）'
       : scene === 'cornell'
         ? 'Cornell Box · 白炉能量守恒 · 三附件 G-buffer'
         : '三附件 G-buffer · Cook-Torrance · HDR 链'
-  const technicalTitle = shadowVariant ? '阴影全家桶（骨架）' : 'G-buffer MRT + 前向 PBR'
+  const technicalTitle = shadowVariant ? '阴影全家桶（SM / PCF / PCSS + CSM）' : 'G-buffer MRT + 前向 PBR'
   const technicalSubtitle = shadowVariant
-    ? '深度图集 / CSM / bias 参数已就位；可见性计算见 gbuffer.frag 的 shadowFactor TODO'
+    ? '深度图集 / CSM / 可见性计算（gbuffer.frag 的 shadowFactor）均已接通；VSM 与级联混合待做'
     : '三附件 G-buffer（着色 / 法线 / MRAO）→ 自写 Cook-Torrance → HDR 链；调试视图可看中间量'
 
   return (

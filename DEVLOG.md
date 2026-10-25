@@ -9,6 +9,52 @@
 
 ---
 
+## 2026-10-25 · p1-shadow 算法段落地收口：shadowFactor 实现、e2e A/B 启用、文档对齐
+
+### 目标
+
+上一轮（2026-10-20）只搭了 p1-shadow 骨架，`shadowFactor()` 是返回 1.0 的占位。本次核对代码时发现 **`shadowFactor()` 已由本人实现**（SM / PCF / PCSS + 三种 bias），但 DEVLOG / TODO / 站点元数据 / 面板 hint 仍把它标注为「占位 / 待自写」，`e2e/shadow.spec.ts` 的算法段验收仍是 `test.fixme`。本轮把**文档与测试追平代码**，并验证实现真实生效。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `e2e/shadow.spec.ts` | 改造 | 删除过时注释；`test.fixme` → `test`，新增 `diffStats()` 与「同参数连渲两次」的确定性噪声基线，断言开阴影产生可见差异 |
+| `src/core/postfx/ShadowPanel.tsx` | 改造 | 头部注释与「实时阴影」hint 去掉「TODO / 待实现」，改为「SM / PCF / PCSS + 三种 bias」 |
+| `src/demos/hello-cube/index.tsx` | 改造 | metric / 技术模式标题与副标题去掉「算法段待自写」，如实写明 shadowFactor 已接通、VSM / 级联混合待做 |
+| `src/site/demos.ts` | 改造 | `shadows` 条目的 metric / algorithm / limitations 更新为「shadowFactor 已实现」，limitations 改为真实的级联硬切 / 未做 texel snapping |
+| `TODO.md` | 改造 | `p1-shadow` 勾为 `[x]`，5.0 / 5.2 / 5.3 验收清单对齐（仅剩级联混合、VSM、texel snapping、alphaTest 投影未做） |
+
+### 关键决策
+
+1. **A/B 用「噪声基线」而非拍脑袋阈值**：Cornell 该机位下阴影只落在两块方块右侧与地面接触区（约占画面 1%），绝对差很小。首次用固定阈值（meanAbs>2 / overRatio>3%）会误判失败。改为：同一 `shadow=1` URL 连渲两次得到确定性噪声（实测 0.00），再要求 `signal > max(0.4, noise×3)` —— 既不会被「两边都是同一帧」骗过，也适配不同 GPU 的细微差异。
+2. **不为了让测试过而调低阈值到噪声量级**：先看图确认阴影真实可见（`16-shadow-off` vs `17-shadow-on` 右箱侧面与地面接触区明显压暗），再定基线。若 `shadowFactor` 退化为恒返回 1.0，信号会落到噪声量级，用例即失败。
+3. **状态如实**：`p1-shadow` 标 `[x]` 指「主线 SM/PCF/PCSS + CSM + 三种 bias 完成」；级联间混合、VSM、texel snapping、alphaTest 投影仍在 limitations 里明写为未做，不伪装成全部完成。
+
+### 踩坑与修复
+
+1. **Playwright 启动清理 `test-results*/` 触发安全删除批量拦截**（本机环境，非代码）：`test-results` 累积 1398、`test-results-shadow` 累积 2038 个文件，均超过 500 阈值被拦。改用**每次唯一的新输出目录**（`--output=test-results-<date><letter>`）绕开对旧目录的批量删除。
+2. **Windows PowerShell 无 `tail`**：`npm run smoke 2>&1 | tail` 直接报 CommandNotFound，去掉管道即可。
+
+### 验证
+
+- `npm run typecheck`：通过（0 错误）。
+- `npx playwright test --output=test-results-<uniq>`：**14 passed + 1 skipped**（该 skip 即本轮的 test.fixme，现已改为 test）。
+  - 白炉 0.978 / -2.20%；户外 IBL A/B 12.166 / 59.03%；自建链 vs 直出线性域 0.255；Bloom A/B 60.918 / 76.27% —— 均与既有记录一致，无回归。
+- `e2e/shadow.spec.ts` 单独跑：**4 passed**。
+  - 深度图集 35.58 / 60.35；cascade 视图 111.11 / 108.77；户外图集 23.21 / 49.39。
+  - 阴影 A/B：平均差 **0.97**、差异 >8 像素 **0.55%**；确定性噪声基线 **0.00** —— 阴影真实生效且集中在投影区。
+- 截图：`e2e/screenshots/16-shadow-off.png` / `17-shadow-on.png`（肉眼可见右箱侧面与地面接触区压暗）。
+
+### 遗留 / 下一步
+
+1. **级联间混合**：当前按 viewDepth 硬切，2 / 4 级级联边界可能有接缝；补相邻级联按切分点窗口线性混合。
+2. **CSM texel snapping**：相机移动时阴影边缘游动（`fitCascade()` 已留 TODO）。
+3. **VSM**：moment RT + 可分离 blur pass，尚未接入。
+4. **alphaTest 投影**：LittlestTokyo 透明片仍投实心影子。
+
+---
+
 ## 2026-10-20 · p1-shadow 骨架：深度图集 + CSM + 中间量调试，算法段留白
 
 ### 目标

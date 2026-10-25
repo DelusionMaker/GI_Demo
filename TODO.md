@@ -69,7 +69,7 @@ npm run build      # 生产构建
 ### 阶段 1 · 直接光照（2–3 周）
 
 - [x] **p1-pbr-ibl** PBR（Cook-Torrance / GGX + Smith + Schlick）+ IBL（split-sum）+ 白炉测试　**核心完成（2026-10-19）**：`gbuffer.frag` 的 `iblDiffuse` / `iblSpecular` 已实现（roughness→LOD + Karis EnvBRDFApprox + 白炉分支）；真实灯光 / CubeCamera 环境贴图 / 白炉开关已接通。2026-10-19 修复了 `tEnvMap` / `uEnvMap` 命名不一致（环境贴图才真正绑定）与漫反射 π 归一化；白炉 HUD 读数实测 **0.978 / -2.2%**，Playwright 已加回归（目标 ±2%，略超，见 DEVLOG）。可选收口：`env` 默认切 `true`、GGX 重要性采样预滤波、±2% 收紧
-- [~] **p1-shadow** 阴影全家桶（SM / PCF / PCSS / CSM / VSM + 三种 bias 补偿）　**骨架完成（2026-10-20）**：`ShadowMapPass` 每帧生成 1–4 级 CSM 深度图集（2048² 默认；单级联按投影物包围球收紧），共享 uniform / `ShadowPanel` / 深度图集与 cascade 调试视图 / e2e 已就位。`gbuffer.frag` 的 `shadowFactor()`（SM / PCF / PCSS）、三种 bias 应用、级联过渡留作**自写段**（文件内 `TODO(p1-shadow · 你来写)`）；VSM 需额外 moment RT + blur pass，未接入。
+- [x] **p1-shadow** 阴影全家桶（SM / PCF / PCSS / CSM / VSM + 三种 bias 补偿）　**主体完成（2026-10-25）**：`ShadowMapPass` 每帧生成 1–4 级 CSM 深度图集（2048² 默认；单级联按投影物包围球收紧），共享 uniform / `ShadowPanel` / 深度图集与 cascade 调试视图 / e2e 已就位。**`gbuffer.frag` 的 `shadowFactor()` 已自写完成**：SM 深度比较、PCF 5×5、PCSS（blocker search + 半影估计）三档，三种 bias（常数 / 法线 / 斜率）可 A/B，级联按 viewDepth 选择；`e2e/shadow.spec.ts` 的 A/B 用例已启用并通过（切阴影产生可见差异）。**未做**：VSM（需额外 moment RT + blur pass）、级联间混合、CSM texel snapping、alpha-tested 投影。
 - [ ] **p1-light-ssr** 多光源与剔除（Forward / Deferred / Clustered 三档）+ SSR
 
 ### 阶段 2 · 观感增量（2–3 周）
@@ -405,7 +405,7 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 把「阴影」从 three 内建能力变成**自写可见性计算**：主平行光视角渲染深度图集 → 在 `gbuffer.frag` 里比较深度并做过滤。
 
 - **框架部分（已完成，2026-10-20）**：深度图集 / CSM 切分 / 光源相机拟合 / uniform 管线 / UI / 调试视图 / e2e。
-- **自写部分（TODO）**：`gbuffer.frag` 的 `shadowFactor()` —— SM 深度比较、PCF 核、PCSS blocker search + 半影、三种 bias 补偿、级联过渡。
+- **自写部分（已完成，2026-10-25）**：`gbuffer.frag` 的 `shadowFactor()` —— SM 深度比较、PCF 5×5、PCSS blocker search + 半影、三种 bias 补偿、按 viewDepth 选级联。级联间混合 / VSM / texel snapping 仍未做（见 5.4）。
 
 > 这条分工与 p0-hdr / p1-pbr-ibl 一致：框架保证「链路能跑、中间量可见、参数可复现」，算法数学留给自己写并在面试里讲。
 
@@ -424,16 +424,16 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 | `demos/hello-cube/index.tsx` / `demos/index.ts` | `shadows` 页面：Cornell + 阴影开启 + 技术模式 |
 | `e2e/shadow.spec.ts` | 图集非空 / cascade 分层可见 / 户外蒙皮模型进图集 / 参数回填 |
 
-### 5.2 待自写算法（按建议顺序）
+### 5.2 自写算法（已完成 2026-10-25）
 
-1. **SM**：`shadowCascadeIndex` → `uShadowMatrices[ci] * worldPos` → 深度比较。越界返回 1.0（级联外不压暗）。
-2. **三种 bias**：常数深度偏移 / 法线偏移 / 斜率缩放，用 `uShadowBiasMode` 分支做 A/B；验收是 Cornell 方块底面无 acne、接触处不脱落。
-3. **PCF**：以 `uShadowTexelSize * uShadowPCFRadius` 为步长取 3×3 / 5×5（或泊松盘），平均可见性。
-4. **PCSS**：blocker search（统计 `sceneDepth < coord.z` 的样本）→ 平均遮挡深度 → 半影宽度 `(coord.z - avgBlockerDepth) * uShadowLightSize` → 可变半径 PCF。
-5. **级联过渡**：相邻级联各采一次，按 viewDepth 在切分点附近线性混合。
-6. **可选**：VSM（moment RT + 可分离 blur；需新增一个 blur pass 与两张 moment RT）。
+1. **SM** ✅ `shadowCascadeIndex` → `uShadowMatrices[ci] * worldPos` → 深度比较。越界返回 1.0（级联外不压暗）。
+2. **三种 bias** ✅ 常数深度偏移 / 法线偏移 / 斜率缩放，用 `uShadowBiasMode` 分支做 A/B；验收是 Cornell 方块底面无 acne、接触处不脱落。
+3. **PCF** ✅ 以 `uShadowTexelSize * uShadowPCFRadius` 为步长取 5×5，平均可见性。
+4. **PCSS** ✅ blocker search（统计 `sceneDepth < coord.z` 的样本）→ 平均遮挡深度 → 半影宽度 `(coord.z - avgBlockerDepth) * uShadowLightSize` → 可变半径 PCF。
+5. **级联过渡** ⬜ 相邻级联各采一次，按 viewDepth 在切分点附近线性混合（当前为硬切）。
+6. **可选 VSM** ⬜ moment RT + 可分离 blur（需新增一个 blur pass 与两张 moment RT）。
 
-所有 TODO 都在 `src/core/postfx/shaders/gbuffer.frag` 的 `shadowFactor()` 上方，含自检点。
+实现在 `src/core/postfx/shaders/gbuffer.frag` 的 `PCF()` / `PCSS()` / `shadowFactor()`（含注释与自检点）。
 
 ### 5.3 验收清单
 
@@ -443,9 +443,9 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 - [x] 参数进 URL（`?shadow=1&shadowMode=pcss&shadowCascades=4&shadowMapSize=1024`）
 - [x] 关闭阴影 / 未实现算法段时，画面与接入前一致（`shadowFactor` 占位返回 1.0）
 - [x] `npm run typecheck` / `npm run build` / `npm run smoke` 通过
-- [ ] **自写段**：SM / PCF / PCSS 三档产生可见且正确的阴影（`e2e/shadow.spec.ts` 的 `test.fixme` 实现后启用）
-- [ ] **自写段**：三种 bias 的 acne / peter-panning 对照可复现
-- [ ] **自写段**：2 / 4 级级联在边界无明显接缝
+- [x] **自写段**：SM / PCF / PCSS 三档产生可见且正确的阴影（`e2e/shadow.spec.ts` 的 A/B 用例已启用：信号 0.97 / 0.55% 远高于确定性噪声 0.00）
+- [x] **自写段**：三种 bias 的 acne / peter-panning 对照可复现（面板「Bias 补偿」切换）
+- [ ] **自写段**：2 / 4 级级联在边界无明显接缝（当前硬切，需级联间混合）
 - [ ] VSM（可选，需新增 moment + blur pass）
 
 ### 5.4 已知取舍

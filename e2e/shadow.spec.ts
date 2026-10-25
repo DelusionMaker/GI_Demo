@@ -10,9 +10,8 @@ import { PNG } from 'pngjs'
  * - 阴影参数进 URL 并在面板回填；
  * - 全程无 console error / pageerror。
  *
- * 注意：`gbuffer.frag` 的 shadowFactor 目前是占位（返回全亮），
- * 所以这里**不**断言「开阴影后画面变暗」——那是算法段实现后的验收，
- * 以 test.fixme 的形式留在文件末尾，避免骨架被误判为已完成。
+ * 注意：`gbuffer.frag` 的 shadowFactor 已实现（SM / PCF / PCSS + 三种 bias），
+ * 末尾的算法段验收会断言「开阴影后画面产生可见差异」。
  */
 
 const SHOT_DIR = join(process.cwd(), 'e2e', 'screenshots')
@@ -31,6 +30,23 @@ function luminanceStats(png: PNG): { mean: number; stddev: number } {
   }
   const mean = sum / count
   return { mean, stddev: Math.sqrt(Math.max(0, sumSq / count - mean * mean)) }
+}
+
+/** 逐像素 A/B：返回平均绝对差（三通道求和）与差异 > 8 的像素占比（%）。 */
+function diffStats(a: PNG, b: PNG): { meanAbs: number; overRatio: number } {
+  const n = Math.min(a.data.length, b.data.length)
+  let sum = 0
+  let over = 0
+  for (let i = 0; i < n; i += 4) {
+    const d =
+      Math.abs(a.data[i] - b.data[i]) +
+      Math.abs(a.data[i + 1] - b.data[i + 1]) +
+      Math.abs(a.data[i + 2] - b.data[i + 2])
+    sum += d
+    if (d > 8) over += 1
+  }
+  const px = n / 4
+  return { meanAbs: sum / px, overRatio: (over / px) * 100 }
 }
 
 async function shootClean(page: Page, name: string): Promise<PNG> {
@@ -127,10 +143,14 @@ test('阴影参数进入 URL 并回填到面板', async ({ page }) => {
 })
 
 /**
- * 算法段验收（实现 gbuffer.frag 的 shadowFactor 后把 fixme 改成 test）：
+ * 算法段验收（gbuffer.frag 的 shadowFactor 已实现）：
  * 固定机位下切换「实时阴影」应产生可见差异，且差距集中在投影区域。
+ *
+ * Cornell 该机位下阴影集中在两块方块右侧 / 地面接触区（约占画面 1%），
+ * 绝对差不大，用「同参数连渲两次」的确定性噪声作基线，要求信号明显高于噪声。
+ * shadowFactor 若退化为恒返回 1.0，则信号会落到噪声量级，本用例即失败。
  */
-test.fixme('阴影开启后应产生可见画面变化（shadowFactor 实现后启用）', async ({ page }) => {
+test('阴影开启后应产生可见画面变化（shadowFactor 实现）', async ({ page }) => {
   await page.goto('/d/shadows?scene=cornell&shadow=0&speed=0&tm=aces&presentation=0')
   await expect(page.locator('canvas').first()).toBeVisible()
   await page.waitForTimeout(2000)
@@ -141,6 +161,24 @@ test.fixme('阴影开启后应产生可见画面变化（shadowFactor 实现后�
   await page.waitForTimeout(2000)
   const on = await shootClean(page, '17-shadow-on')
 
+  // 同参数再渲一次，得到确定性噪声基线（同一 URL 两次渲染的理论差）
+  const onAgain = await shootClean(page, '17-shadow-on-again')
+  const noise = diffStats(on, onAgain)
+
   expect(luminanceStats(off).stddev).toBeGreaterThan(5)
   expect(luminanceStats(on).stddev).toBeGreaterThan(5)
+
+  const signal = diffStats(off, on)
+  console.log(
+    `[阴影 A/B] 平均差=${signal.meanAbs.toFixed(2)} 差异>8 像素占比=${signal.overRatio.toFixed(2)}% ` +
+      `(噪声基线 mean=${noise.meanAbs.toFixed(2)} over=${noise.overRatio.toFixed(2)}%)`,
+  )
+
+  // 1) 信号必须明显高于确定性噪声；2) 且达到可感知量级（防「两边都是同一帧」的假阳性）
+  expect(signal.meanAbs, '开阴影后画面无明显变化（shadowFactor 可能未生效）').toBeGreaterThan(
+    Math.max(0.4, noise.meanAbs * 3),
+  )
+  expect(signal.overRatio, '开阴影后差异像素过少').toBeGreaterThan(
+    Math.max(0.3, noise.overRatio * 3),
+  )
 })
