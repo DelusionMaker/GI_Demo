@@ -62,6 +62,8 @@ export const gbufferShared = {
   /** 0 = none / 1 = constant / 2 = normal offset / 3 = slope，与 SHADOW_BIAS_INDEX 一致 */
   uShadowBiasMode: { value: 2 },
   uShadowBias: { value: 0.0008 },
+  /** 斜率缩放系数（slope bias 模式，与 uShadowBias 解耦） */
+  uShadowSlopeBias: { value: 0.002 },
   uShadowNormalBias: { value: 0.02 },
   uShadowPCFRadius: { value: 1.5 },
   /** PCSS 半影尺度（UV 空间近似；按光源世界尺寸 / 场景尺度调） */

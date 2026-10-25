@@ -81,6 +81,8 @@ export class ShadowMapPass implements Pass {
   atlasSize = 2048
   /** 常数深度偏移（归一化深度 [0,1]） */
   bias = 0.0008
+  /** 斜率缩放系数（slope bias 模式，与 bias 解耦） */
+  slopeBias = 0.002
   /** 法线偏移（世界单位） */
   normalBias = 0.02
   /** PCF 半径（纹素） */
@@ -479,6 +481,7 @@ export class ShadowMapPass implements Pass {
     gbufferShared.uShadowMode.value = SHADOW_MODE_INDEX[this.mode]
     gbufferShared.uShadowBiasMode.value = SHADOW_BIAS_INDEX[this.biasMode]
     gbufferShared.uShadowBias.value = this.bias
+    gbufferShared.uShadowSlopeBias.value = this.slopeBias
     gbufferShared.uShadowNormalBias.value = this.normalBias
     gbufferShared.uShadowPCFRadius.value = this.pcfRadius
     gbufferShared.uShadowLightSize.value = this.lightSize

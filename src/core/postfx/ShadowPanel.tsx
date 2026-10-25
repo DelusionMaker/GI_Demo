@@ -92,6 +92,16 @@ export const ShadowPanel = observer(function ShadowPanel() {
       />
 
       <Slider
+        label="斜率缩放"
+        min={0}
+        max={0.01}
+        step={0.0005}
+        digits={4}
+        value={p.shadowSlopeBias}
+        onChange={(value) => shadowParams.set({ shadowSlopeBias: value })}
+      />
+
+      <Slider
         label="法线偏移"
         min={0}
         max={0.1}

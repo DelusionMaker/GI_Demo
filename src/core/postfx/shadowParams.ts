@@ -25,6 +25,8 @@ export type ShadowParams = {
   shadowBiasMode: ShadowBiasMode
   /** 常数深度偏移 */
   shadowBias: number
+  /** 斜率缩放系数（slope bias 模式） */
+  shadowSlopeBias: number
   /** 法线偏移（世界单位） */
   shadowNormalBias: number
   /** PCF 半径（纹素） */
@@ -46,6 +48,7 @@ export const SHADOW_PARAM_DEFAULTS: ShadowParams = {
   shadowDistance: 40,
   shadowBiasMode: 'normal',
   shadowBias: 0.0008,
+  shadowSlopeBias: 0.002,
   shadowNormalBias: 0.02,
   shadowPCFRadius: 1.5,
   shadowLightSize: 0.03,

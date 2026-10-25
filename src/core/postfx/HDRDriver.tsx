@@ -92,6 +92,7 @@ export function HDRDriver() {
     pipeline.shadow.maxDistance = shadowKnobs.shadowDistance
     pipeline.shadow.biasMode = shadowKnobs.shadowBiasMode
     pipeline.shadow.bias = shadowKnobs.shadowBias
+    pipeline.shadow.slopeBias = shadowKnobs.shadowSlopeBias
     pipeline.shadow.normalBias = shadowKnobs.shadowNormalBias
     pipeline.shadow.pcfRadius = shadowKnobs.shadowPCFRadius
     pipeline.shadow.lightSize = shadowKnobs.shadowLightSize
