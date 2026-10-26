@@ -13,6 +13,9 @@ import * as THREE from 'three'
  *   demo 旋钮 ──<GBufferParamSync>──► uHasEnv / uEnvIntensity / uFurnace
  *   以上全部 ──► gbuffer.frag（p1 自写 IBL 算法段读取）
  */
+/** 多光源数组容量（必须与 gbuffer.frag 的 MAX_LIGHTS 一致）。p1-light-ssr S1 用 uniform 数组承载，S2/S3 Clustered 改走数据纹理后可下调。 */
+export const MAX_LIGHTS = 64
+
 export const gbufferShared = {
   /** 主平行光：指向光源的单位向量（世界空间，与 gbuffer.frag 的 L 同语义） */
   uLightDir: { value: new THREE.Vector3(0.5, 0.8, 0.4).normalize() },
@@ -20,6 +23,20 @@ export const gbufferShared = {
   uLightColor: { value: new THREE.Color(1, 1, 1).multiplyScalar(3) },
   /** 环境兜底项（IBL 未启用时）：颜色 × 强度 */
   uAmbient: { value: new THREE.Color(1, 1, 1).multiplyScalar(0.03) },
+
+  // ── 多光源（p1-light-ssr S1：暴力前向；S2/S3 Clustered 改走数据纹理取代本数组）──
+  /** 活跃光源数量（GBufferLightSync 每帧填充；0 = 退化到仅环境/IBL） */
+  uLightCount: { value: 0 },
+  /** 主平行光（阴影投射光）在 uLightData* 数组中的索引；-1 = 无阴影光 */
+  uShadowLightIndex: { value: -1 },
+  /** 每盏灯：xyz = 世界位置，w = range（0 = 无限远，平行光用） */
+  uLightData0: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) },
+  /** 每盏灯：rgb = 颜色 × 强度，w = 类型（0 平行光 / 1 点光 / 2 聚光） */
+  uLightData1: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) },
+  /** 每盏灯：xyz = 方向（平行光=指向光源；聚光=光锥轴 从灯出），w = cosInner（聚光内角） */
+  uLightData2: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) },
+  /** 每盏灯：x = cosOuter（聚光外角），yzw 预留 */
+  uLightData3: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) },
 
   /** 环境贴图：CubeCamera 捕获的立方体贴图（带 mipmap），世界空间方向直接采样 */
   uEnvMap: { value: null as THREE.Texture | null },

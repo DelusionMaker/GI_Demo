@@ -70,7 +70,7 @@ npm run build      # 生产构建
 
 - [x] **p1-pbr-ibl** PBR（Cook-Torrance / GGX + Smith + Schlick）+ IBL（split-sum）+ 白炉测试　**核心完成（2026-10-19）**：`gbuffer.frag` 的 `iblDiffuse` / `iblSpecular` 已实现（roughness→LOD + Karis EnvBRDFApprox + 白炉分支）；真实灯光 / CubeCamera 环境贴图 / 白炉开关已接通。2026-10-19 修复了 `tEnvMap` / `uEnvMap` 命名不一致（环境贴图才真正绑定）与漫反射 π 归一化；白炉 HUD 读数实测 **0.978 / -2.2%**，Playwright 已加回归（目标 ±2%，略超，见 DEVLOG）。可选收口：`env` 默认切 `true`、GGX 重要性采样预滤波、±2% 收紧
 - [x] **p1-shadow** 阴影全家桶（SM / PCF / PCSS / CSM / VSM + 三种 bias 补偿）　**主体完成（2026-10-25）**：`ShadowMapPass` 每帧生成 1–4 级 CSM 深度图集（2048² 默认；单级联按投影物包围球收紧），共享 uniform / `ShadowPanel` / 深度图集与 cascade 调试视图 / e2e 已就位。**`gbuffer.frag` 的 `shadowFactor()` 已自写完成**：SM 深度比较、PCF 5×5、PCSS（blocker search + 半影估计）三档，三种 bias（常数 / 法线 / 斜率）可 A/B，级联按 viewDepth 选择；`e2e/shadow.spec.ts` 的 A/B 用例已启用并通过（切阴影产生可见差异）。**未做**：VSM（需额外 moment RT + blur pass）、级联间混合、CSM texel snapping、alpha-tested 投影。
-- [ ] **p1-light-ssr** 多光源与剔除（Forward / Deferred / Clustered 三档）+ SSR
+- [ ] **p1-light-ssr** 多光源与剔除（**Clustered 优先**：Forward + Clustered 两档，Deferred 已排除）+ SSR（屏幕空间反射）　**拆解见第七章**
 
 ### 阶段 2 · 观感增量（2–3 周）
 
@@ -84,7 +84,7 @@ npm run build      # 生产构建
 
 ### 阶段 4 · 深水区（4–6 周） ⚠️ 四选一，只做深一条
 
-- [ ] **p4-deep** VXGI / SDF GI / DDGI / 实时 PT（四选一，需 WebGPU；届时在 `createRenderer.ts` 单点切后端）
+- [ ] **p4-deep** 深水方向已锁定 **DDGI**（动态漫反射全局光照）；其余 VXGI / SDF GI / 实时 PT 已排除。需 WebGPU，届时在 `createRenderer.ts` 单点切后端（2026-10-26 确认）
 
 ### 阶段 5 · 收尾（2 周）
 
@@ -459,11 +459,144 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 
 ---
 
-## 六、参考：规划约束
+## 七、p1-light-ssr 拆解（Clustered 优先，SSR 次之）
+
+### 7.0 目标与定位
+
+把「多光源 + 剔除」从「单主平行光」升级为可演示的 Clustered 前向渲染，并补 SSR 作为屏幕空间增量。阶段 0/1 的 PBR+IBL+阴影已就位，本阶段补的是「一帧里很多光源且不爆」与「屏幕空间反射」两块，正是主线 HDR→PBR→阴影之后的下一个成品缺口。
+
+**为什么先做这一项（阶段 1 第 3 环）**：多光源 + 剔除是项目反复卡住的「真实性能故事」前提——当前 Cornell 8 mesh 压不出逐 pass 差异，而 Clustered 本身就是「为什么掉帧、怎么优化」的最佳论据（forward 多光源的 uniform/循环开销 vs clustered 的 cluster 列表开销）。同时它只依赖已铺好的 G-buffer，边际成本最低。
+
+**现状事实（动手前先认清）**
+
+| 已就位 | 仍然是零 |
+| --- | --- |
+| G-buffer MRT（gAlbedo/gNormal/gMRAO + DepthTexture）真实启用 | **多光源**（只有单主平行光 + ambient，每个像素过同一盏灯） |
+| 前向 Cook-Torrance BRDF（`gbuffer.frag` 的 D/G/F） | **任何剔除**（无 cluster grid、无光源分配） |
+| `GBufferLightSync` 每帧同步灯光、`GBufferEnvironment` IBL | **光源数组 uniform / 数据纹理**（灯数 > 1 的载体未建） |
+| `selfManaged` pass 模式（`ShadowMapPass`）、逐 pass GPU 计时 | **屏幕空间反射**（无 ray march 通道） |
+| 调试视图下拉机制（`hdrDebug` 截断 + 下拉） | 光源类型（点光 / 聚光参数与 shader 分支） |
+
+**前置依赖已就绪**：G-buffer 三附件 + 深度、前向着色器、灯光同步骨架、调试视图与 URL 序列化框架均已具备。**本轮不需要改动 store 层**（除给多光源参数加一组 `createDemoStore`）。
+
+---
+
+### 7.1 架构决策：Forward-Clustered，不做 Deferred
+
+- **方案 A（采纳）**：保持 `p0-gbuffer-hud` S2 定稿的**前向**管线，在 `gbuffer.frag` 里把「遍历全部光源」换成「按 cluster 取本 cluster 的光源列表」。cluster 列表由每帧的剔除模块（先 CPU，阶段 4 再迁 compute）算好，以**数据纹理**上传。
+  - 收益：不推翻前向决策、不引入独立光照 pass，复用现有 MRT/深度；cluster 调试视图天然可画（命中筛选标准 #2）。
+  - 代价：前向下每个像素仍要循环本 cluster 的光源数（通常远小于总光源数），但已是经典 Clustered 收益。
+- **方案 B（否决）**：Deferred 多光源——需要把「场景 → G-buffer → 独立光照 pass」重构，而 gAlbedo 当前存的是**最终颜色**而非 unlit albedo，改回延迟要动 S2 定稿决策，返工大、风险高。本阶段价值（性能故事 + 中间量）在前向下已能讲清，故 Deferred 列为可选。
+
+**硬约束：cluster 列表存储不得假设 SSBO**（WebGL2 无）。用数据纹理（`texelFetch` 取整数索引，GLSL3 已支持）；阶段 4 切 WebGPU 后再考虑 SSBO / compute 剔除。
+
+---
+
+### 7.2 数据结构与存储（WebGL2 约束）
+
+- **光源数组**：`uLightArray`，每盏灯 = `position(vec3)` / `color(vec3)` / `range` / `type` / `intensity`（点光/聚光/平行光用 `type` 分支）。建议先走 **uniform 数组**（灯数 ≤ 64 足够演示），超限再换数据纹理。
+- **cluster 网格**：`tileSize = 16` 像素 × `depthSlices`（建议 24，对数切分）。总 cluster 数 = `ceil(W/16) × ceil(H/16) × 24`。
+- **cluster 索引列表（经典两贴图法）**：
+  - `uClusterLightGrid`：每 cluster 一个 `RG` 项 = `(offset, count)`。
+  - `uClusterLightIndices`：扁平全局索引数组（数据纹理，`R32UI` / `RGBA32F` 打包）。
+- **着色时**：`clusterIdx = tile + depthSlice·tilesPerRow + …`；`texelFetch(uClusterLightGrid, clusterIdx)` → `(offset, count)`；循环 `count` 次 `texelFetch(uClusterLightIndices, offset+i)` 取灯号 → 读 `uLightArray`。
+
+---
+
+### 7.3 落地步骤（含每步验收点）
+
+| 步骤 | 内容 | 验收点 | 状态 |
+| --- | --- | --- | --- |
+| **S1** | 多光源模型 + `GBufferLightSync` 扩展（收集全部灯：主平行光保留 + 点光/聚光，含位置/方向/角度/衰减）；`gbuffer.frag` 暴力遍历全部灯；调试视图（当前灯数 HUD / 光源列表） | 多盏点光在 Cornell/户外产生正确照明；无额外灯时画面与单主光一致（回归）；HUD 显示当前灯数 | 🟡 框架已落地（2026-10-26） |
+| **S2** | cluster grid 构建（**CPU**）：屏幕 tile × 深度切片（对数切分）；光源 → cluster 相交分配；上传 `uClusterLightGrid` / `uClusterLightIndices` 两张数据纹理；`ClusterDebugPass`（tile 叠加 + 每 cluster 灯数热力） | cluster 网格调试视图可见；每 cluster 灯数与手动统计一致；光源移动时分配实时更新 | ⬜ |
+| **S3** | Clustered 前向着色：`gbuffer.frag` 按 `fragCoord + viewDepth` 取 cluster → 取灯列表 → 循环；与 S1 暴力前向做 **A/B**（同场景同灯数亮度应一致，但逐像素循环次数下降）；perf 面板加「clustered vs brute」对照；GPU 计时出现剔除一行 | A/B 画面差异在噪声级；灯数高时 clustered 帧时间/耗时占比优于暴力；性能面板逐 pass 归因 | ⬜ |
+| **S4** | **SSR**（屏幕空间反射）：复用 gNormal/gAlbedo/DepthTexture 做 ray march；反射贡献混入高光/环境；SSR 开关 + 步进/最大距离/粗糙度衰减旋钮；`SSRDebugPass`（命中掩码 / 反射贡献） | 户外金属球出现环境反射；关闭时画面与接入前一致（零回归）；SSR 在性能面板逐 pass 归因 | ⬜ |
+| **S5** | 收尾：`src/site/demos.ts` 的 `light-ssr` 条目 `status → wip`；如实补 limitations（Forward-Clustered 非 Deferred、cluster 上限、SSR 屏幕空间穿帮/出屏缺失） | 站点该 demo 不再显示「规划中」；limitations 诚实 | ⬜ |
+
+#### 7.3.1 S1 设计要点（动手前）
+
+- **`GBufferLightSync` 改造**：当前只取主平行光 + `AmbientLight` 求和。需改为收集 `scene.children` 里全部 `PointLight` / `SpotLight` / `DirectionalLight`，写进共享 uniform 数组（模块级临时数组避免 GC，沿用现有同步模式）。
+- **`gbuffer.frag` 改动**：新增 `uLightCount` + `uLightArray[]`；直接光段外层加 `for (int i=0;i<uLightCount;i++)`，按 `uLightArray[i].type` 分支算点光/聚光/平行光的 `L` 与衰减；IBL/环境项保持不变。
+- **调试视图**：先复用 HUD 显示灯数；光源列表（类型/位置/颜色）作为可折叠面板，验证「同步真实」。
+
+#### 7.3.1.1 S1 已落地（2026-10-26）—— 框架骨架，作品集段留 TODO
+
+- **`gbufferShared.ts`**：新增 `MAX_LIGHTS = 64` 常量 + `uLightCount` / `uShadowLightIndex` / `uLightData0..3`（4 个 `vec4[64]` SoA 数组：位置+range、颜色+类型、方向+cosInner、cosOuter）。选 SoA `vec4` 数组而非 struct 数组，是 three.js uniform 上传最稳的写法（struct 数组在 three 里易踩坑）。
+- **`GBufferLightSync.tsx`**：改为遍历场景图，按 `instanceof` 收集四类灯；主平行光取「优先 `castShadow` 那盏」并写 `uShadowLightIndex`；环境光求和兜底；模块级临时向量避免 GC。
+- **`gbuffer.frag`**：直接光段改为 `for (i<MAX_LIGHTS; i>=uLightCount break)` 的暴力前向循环，逐灯复用 D/G/F 累加；平行光方向恒定、点光/聚光带距离窗衰减与聚光锥角；阴影仅对 `uShadowLightIndex` 的主平行光施加。**回归保证**：仅有单主平行光时，循环体与该灯旧路径逐字节等价，画面与接入前一致。
+- **留给作品集的 TODO（已在代码里标注）**：
+  1. `gbuffer.frag` 点光/聚光**物理正确衰减**（inverse-square + 距离窗，当前是 cheap baseline）；
+  2. 逐灯 **specular 重要性采样 / 多灯能量守恒**细化（当前朴素逐灯叠加）；
+  3. **逐灯阴影**（点光 cube shadow / 聚光锥 shadow，当前只有主平行光有阴影）；
+  4. **HUD 灯数显示 / 光源列表面板**（S1 验收点的调试视图部分，未做）；
+  5. **S2/S3 用 Clustered 剔除替换本暴力循环**（核心性能故事，真正的自写硬货）。
+
+#### 7.3.2 S2 设计要点（动手前）
+
+- **cluster 划分**：屏幕按 16×16 像素分 tile；深度按**对数**切片（近密远疏，契合透视）。cluster AABB 由 tile 四角射线 × 深度切片近远平面求交得到。
+- **光源分配**：每盏灯（sphere/aabb）与 cluster 做相交测试，命中则把灯号追加到该 cluster 的全局索引数组，并在 `grid` 里记 `(offset, count)`。CPU 实现足够清晰、可讲；灯数几百内每帧可接受。
+- **`ClusterDebugPass`**：复用 `ShadowDebugPass` 的「全屏调试 + 橙色 tile 边框」模式；热力视图按每 cluster 灯数映射色阶。
+
+#### 7.3.3 S3 设计要点（动手前）
+
+- **cluster 索引计算**：片元里 `tile = ivec2(gl_FragCoord.xy / 16)`；`depthSlice` 由 `viewZ`（线性深度）经对数反算；`clusterIdx` 拼装后 `texelFetch` 取 `(offset, count)`。
+- **A/B 对照**：同一场景同灯数，分别跑暴力前向（S1）与 clustered（S3），像素差应在噪声级（证明 cluster 分配无漏光/误剔除）；perf 同时采两种的逐 pass GPU ms + 平均循环次数，给出「灯数阶梯 8/32/64」对照表。
+- **剔除耗时进面板**：S2 的 CPU 分配耗时作为一行，讲清「为什么用 clustered 而不是每像素遍历全部灯」时要同时给出剔除自身开销（性能故事的「另一面」）。
+
+#### 7.3.4 S4 设计要点（动手前）
+
+- **ray march**：从 `gNormal` 反射视线，沿 `gAlbedo` 当前命中点步进，用 `DepthTexture` 做相交（与 `SSRDebugPass` 的命中掩码同源）；粗糙度做反射强度/模糊淡化，越粗糙越回退到已有 IBL（`uHasEnv`），避免硬边。
+- **穿帮处理**：屏幕空间反射只反射画面内存在的几何，出屏/背面缺失处回落 IBL；粗糙度阈值以上直接走 IBL，保证零穿帮观感。
+- **挂链**：作为 `selfManaged` 或下游 pass，读取现有 MRT + 深度，产物叠加回 gAlbedo（前向最终色）。
+
+---
+
+### 7.4 验收清单
+
+- [ ] 多光源在前向管线正确照明（点光/聚光衰减、与 IBL/阴影叠加无冲突）
+- [ ] cluster grid 真实生成，调试视图可切 tile 叠加 / 每 cluster 灯数热力
+- [ ] Clustered 与暴力前向 A/B 画面一致（差异在噪声级）、逐像素循环次数下降
+- [ ] SSR 在金属/光滑表面产生可见反射，关闭时零回归
+- [ ] 所有新增旋钮进 URL（`?clustered=` / `?ssr=` / 步进步数 / 粗糙度衰减 / 灯数）
+- [ ] 性能面板逐 pass 归因（cluster 剔除 / SSR 各一行）
+- [ ] `Pipeline` / passes 目录仍无 React import（剔除/反射核心与 React 无关）
+- [ ] `npm run typecheck` / `npm run build` / `npm run smoke` 通过
+- [ ] 站点 demo `status` 改 `wip`，limitations 如实填写
+
+---
+
+### 7.5 风险与注意事项
+
+- **WebGL2 无 SSBO**：cluster 索引走数据纹理 + `texelFetch`；灯数上限先用 uniform 数组（≤ 64），超限再换纹理。
+- **cluster 深度切片**：均匀切片在近处过密、远处过疏；建议对数切分（参考 Frostbite/小区分），避免近景 cluster 爆炸。
+- **动态剔除每帧 CPU 成本**：cluster 分配本身有开销，是性能故事的「另一面」——S3 必须同时给出剔除耗时，不能只报 clustered 收益。
+- **`GBufferLightSync` 扩展**：当前只取主平行光 + ambient；点光/聚光需补方向/角度/衰减参数与 shader `type` 分支。
+- **SSR 穿帮**：屏幕空间反射只反射画面内几何，出屏/背面缺失；用粗糙度回退 IBL 兜底（已有 `uHasEnv`），避免硬边。
+- **DepthTexture 可采样性**：`p0-gbuffer-hud` 已确认 MSAA 下 depth blit 可用，但 SSR 阶段需目标设备复核（TODO 已记）。
+
+---
+
+### 7.6 本轮明确不做
+
+- **Deferred 多光源**：推翻 S2 前向定稿，返工大；Forward-Clustered 已能讲清性能故事，列为可选。
+- **WebGPU compute 剔除**：阶段 4 切后端时再考虑把 S2 的 CPU 剔除迁移到 compute（DDGI 也会用 compute）。
+- **逐光源阴影**：点光 cube shadow / 聚光锥 shadow 成本极高，超出本阶段；列入 limitations「多光源不含逐光源阴影」。
+- **光源类型全谱**：先做点光 + 聚光 + 保留主平行光；面积光 / IES 不在范围。
+
+---
+
+### 7.7 配套建议
+
+- **性能故事素材**：S3 同时采「暴力前向（全灯遍历）」与「clustered」两套在同一场景（灯数阶梯 8/32/64），给出逐 pass GPU ms + 平均循环次数——这是作品集最该有的「为什么掉帧、怎么优化」证据。
+- **演示场景**：多光源最好用 Sponza 或户外多灯，Cornell 灯少压不出差异；与 `p0-assets` 室内 Sponza 推进并行收益最大（见阶段 1 评估）。
+
+---
+
+## 八、参考：规划约束
 
 ### 推荐主线组合（6 个成品）
 
-HDR/色调映射底座 → PBR + IBL → 阴影全家桶 → 烘焙 lightmap + SH 探针 → GTAO / SSGI → 一条深水方向（VXGI / SDF / DDGI / 实时 PT 四选一）
+HDR/色调映射底座 → PBR + IBL → 阴影全家桶 → 烘焙 lightmap + SH 探针 → GTAO / SSGI → 深水方向（已锁定 **DDGI**）
 
 ### 三条筛选标准（挑选方向时反复对照）
 

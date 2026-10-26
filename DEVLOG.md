@@ -9,6 +9,44 @@
 
 ---
 
+## 2026-10-26 · p4-deep 方向锁定决策：DDGI（动态漫反射 GI）
+
+### 目标
+
+在阶段 4 尚未开工前，先定下「深水区四选一」的归属，避免阶段 3 返工，并把决策与选型理由记入文档（与 TODO.md 阶段 4 条目、主线组合同步）。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `TODO.md` | 改造 | 阶段 4 条目由「VXGI / SDF GI / DDGI / 实时 PT 四选一」改为「已锁定 **DDGI**，其余方向已排除」；主线组合深水方向括号同步改为「已锁定 DDGI」 |
+
+### 关键决策
+
+1. **选 DDGI 而非其余三者**，理由：
+   - **与阶段 3 烘焙探针衔接最顺**：阶段 3 的 `p3-bake` 做静态 SH 探针（兜底），DDGI 是「动态光源下的探针版 GI」——二者同属**世界空间辐照度探针**范式，阶段 3 抽象出的探针缓存层可直接复用到 DDGI 的 probe grid，避免规划坑 #1（VXGI/DDGI 都需世界空间辐照度缓存，应先抽象再二选一）。
+   - **不依赖硬件光追，纯光栅 + compute**：命中 WebGL2→WebGPU 红线（「无硬件光线追踪」），DDGI 用 ray box/probe 采样而非 BVH 追踪，WebGPU compute 即可跑，比实时 PT（需累积 + compute、最重、最难稳定交互帧率）现实得多。
+   - **比 VXGI 轻、比 SDF GI 少一条资产管线**：VXGI 需体素化 + 世界空间体素缓存（开销与维护成本高）；SDF GI 需额外 SDF 生成/更新管线。DDGI 只需 probe grid + 两张 irradiance/visibility 图集，调试视图（probe 球、visibility 切分）也天然满足「可视化中间量」筛选标准。
+2. **遵循「烘焙先兜底」原则**：DDGI 是动态 GI，低端/无 WebGPU 设备仍走 `p3-bake` 的静态 lightmap/SH 探针降级（多级降级路径在 `p5-final` 补完），DDGI 不替代兜底，只做高端增强。
+3. **后端切分点不变**：届时仅在 `src/core/renderer/createRenderer.ts` 单点切 `three/webgpu`，渲染核心（Pipeline/Pass）保持与 React/后端无关，不打两套代码。
+
+### 踩坑与修复
+
+- 无（纯决策记录，未动代码）。
+
+### 验证
+
+- 无（决策项，无运行验证；后续 `p4-deep` 开工时用 TODO 第三/四章粒度拆 S1–S4）。
+- 一致性核对：`TODO.md` 阶段 4 条目、主线组合、本决策条目三处口径一致。
+
+### 遗留 / 下一步
+
+1. **阶段 3 先抽象探针层**：`p3-bake` 落地 SH 探针时，把「probe grid 数据结构 + irradiance 采样接口」设计成对 DDGI 可复用的形态（DDGI 把静态 SH 换成动态 irradiance/visibility 图集）。
+2. **阶段 4 开工前确认 WebGPU 覆盖实测**：`eng-webgpu` 项需在真实设备测 WebGPU 可用性 + 降级标注，DDGI 才能锁定「仅 WebGPU 档位」。
+3. **DDGI 拆解待做**：届时按 docs 既有 S1–S4 模板拆（probe grid 生成 / ray 采样 / 图集更新 / 降噪与 temporal），并接 GPU 计时与调试视图。
+
+---
+
 ## 2026-10-25 · p1-shadow 算法段落地收口：shadowFactor 实现、e2e A/B 启用、文档对齐
 
 ### 目标
