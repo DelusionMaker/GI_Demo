@@ -16,6 +16,16 @@ import * as THREE from 'three'
 /** 多光源数组容量（必须与 gbuffer.frag 的 MAX_LIGHTS 一致）。p1-light-ssr S1 用 uniform 数组承载，S2/S3 Clustered 改走数据纹理后可下调。 */
 export const MAX_LIGHTS = 64
 
+/** 新建一张存 cluster 灯列表用的 RGBA32F 数据纹理（Nearest 过滤，无需线性过滤 float 扩展） */
+function makeClusterTexture(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Float32Array(4), 1, 1, THREE.RGBAFormat, THREE.FloatType)
+  tex.minFilter = THREE.NearestFilter
+  tex.magFilter = THREE.NearestFilter
+  tex.generateMipmaps = false
+  tex.needsUpdate = true
+  return tex
+}
+
 export const gbufferShared = {
   /** 主平行光：指向光源的单位向量（世界空间，与 gbuffer.frag 的 L 同语义） */
   uLightDir: { value: new THREE.Vector3(0.5, 0.8, 0.4).normalize() },
@@ -37,6 +47,21 @@ export const gbufferShared = {
   uLightData2: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) },
   /** 每盏灯：x = cosOuter（聚光外角），yzw 预留 */
   uLightData3: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) },
+
+  // ── Clustered 剔除（p1-light-ssr S2）：cluster 灯列表数据纹理 + 网格参数 ──
+  /** 调试：cluster 可视化（0=关 / 1=tile 叠加 / 2=每 cluster 灯数热力），由 HDRDriver 每帧同步 */
+  uClusterDebug: { value: 0 },
+  /** 1 = 启用 Clustered 前向（替换 S1 暴力循环）；0 = 暴力前向（A/B 基线）。默认 0 保证现 demo 无回归；S3 接入 UI 旋钮 / URL 参数做 A/B 时改为可切换、默认 1 */
+  uClustered: { value: 1 },
+  /** cluster 网格尺寸：x=gridW, y=gridH, z=zSlices（GBufferLightSync 每帧填充） */
+  uClusterDims: { value: new THREE.Vector3(1, 1, 1) },
+  /** 相机近/远平面（算 slice 用） */
+  uViewNear: { value: 0.1 },
+  uViewFar: { value: 100 },
+  /** per-cluster 灯列表：RGBA32F，每 cluster 存 (offset, count, 0, 0)；GBufferLightSync 每帧重建 */
+  uClusterLightGrid: { value: makeClusterTexture() },
+  /** 扁平全局灯号索引数组：RGBA32F，每槽 .r = 灯号；GBufferLightSync 每帧重建 */
+  uClusterLightIndices: { value: makeClusterTexture() },
 
   /** 环境贴图：CubeCamera 捕获的立方体贴图（带 mipmap），世界空间方向直接采样 */
   uEnvMap: { value: null as THREE.Texture | null },

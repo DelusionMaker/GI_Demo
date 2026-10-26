@@ -1,35 +1,61 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { gbufferShared, MAX_LIGHTS } from './materials/gbufferShared'
+import { buildClusterLights, CLUSTER_TEX_WIDTH, type ClusterLightInput } from './clusterCulling'
 
-// 模块级临时对象：每帧遍历场景图时不产生分配
+// 模块级临时对象：每帧遍历场景图 / 重建 cluster 时不产生分配
 const tmpLightPos = new THREE.Vector3()
 const tmpTargetPos = new THREE.Vector3()
 const tmpAmbient = new THREE.Color()
 const tmpColor = new THREE.Color()
 const tmpAxis = new THREE.Vector3()
+const bufSize = new THREE.Vector2()
 
 const directionalLights: THREE.DirectionalLight[] = []
 const pointLights: THREE.PointLight[] = []
 const spotLights: THREE.SpotLight[] = []
 const ambientLights: THREE.AmbientLight[] = []
 
+// cluster 数据纹理：每次构建都重建（仅在 clustered/调试开启时触发，可接受；
+// 作品集优化点：尺寸不变时复用同一张纹理并 .set，避免每帧 dispose/上传开销）
+let gridTex: THREE.DataTexture | null = null
+let indicesTex: THREE.DataTexture | null = null
+
+function uploadClusterTextures(gridData: Float32Array, indicesData: Float32Array, totalClusters: number) {
+  const gw = Math.ceil(totalClusters / CLUSTER_TEX_WIDTH) || 1
+  const totalIndices = indicesData.length / 4
+  const iw = Math.ceil(Math.max(totalIndices, 1) / CLUSTER_TEX_WIDTH) || 1
+
+  gridTex?.dispose()
+  // 类型边界：TS 5.x 把 Float32Array 默认为 ArrayBufferLike，与 three 的 BufferSource(ArrayBuffer) 不兼容，此处收窄
+  gridTex = new THREE.DataTexture(gridData as unknown as Float32Array<ArrayBuffer>, CLUSTER_TEX_WIDTH, gw, THREE.RGBAFormat, THREE.FloatType)
+  gridTex.minFilter = gridTex.magFilter = THREE.NearestFilter
+  gridTex.generateMipmaps = false
+  gridTex.needsUpdate = true
+  gbufferShared.uClusterLightGrid.value = gridTex
+
+  indicesTex?.dispose()
+  indicesTex = new THREE.DataTexture(indicesData as unknown as Float32Array<ArrayBuffer>, CLUSTER_TEX_WIDTH, iw, THREE.RGBAFormat, THREE.FloatType)
+  indicesTex.minFilter = indicesTex.magFilter = THREE.NearestFilter
+  indicesTex.generateMipmaps = false
+  indicesTex.needsUpdate = true
+  gbufferShared.uClusterLightIndices.value = indicesTex
+}
+
 /**
- * 把场景里的真实灯光同步到 GBufferMaterial 的共享 uniform（p1-light-ssr S1）。
+ * 把场景里的真实灯光同步到 GBufferMaterial 的共享 uniform（p1-light-ssr S1 + S2）。
  *
- * 规则（与 p1-light-ssr 范围一致）：
- * - 收集全部 平行光 / 点光 / 聚光 / 环境光，写入 uLightData* 数组（容量 MAX_LIGHTS）；
- * - 主平行光取「优先 castShadow 的那一盏」—— 它同时是阴影投射光，
- *   其索引写进 uShadowLightIndex，gbuffer.frag 只对它施加 shadowFactor；
- * - AmbientLight 全部求和，作为 IBL 未接入时的占位环境项；
- * - 多光源循环 + 剔除：S1 是暴力前向（gbuffer.frag 遍历全部灯），
- *   **Clustered 剔除是 S2/S3 的「作品集自写段」**，届时替换 gbuffer.frag 的循环与
- *   本同步里的「整体数组」为「per-cluster 灯列表」（数据纹理）。
+ * - S1：收集全部 平行光 / 点光 / 聚光 / 环境光，填入 uLightData*（暴力前向用）。
+ * - S2：当 `uClustered==1` 或 `uClusterDebug!=0` 时，额外构建 Clustered 的
+ *   per-cluster 灯列表（CPU 基线，见 clusterCulling.ts），写入两张数据纹理。
+ *   默认 uClustered=0 → 不构建，走 S1 暴力路径，保证现 demo 无回归。
  *
  * 每帧遍历一次场景图（demo 规模很小）；用模块级数组/向量避免 GC 抖动。
  */
 export function GBufferLightSync() {
   const scene = useThree((state) => state.scene)
+  const camera = useThree((state) => state.camera)
+  const gl = useThree((state) => state.gl)
 
   useFrame(() => {
     directionalLights.length = 0
@@ -72,13 +98,12 @@ export function GBufferLightSync() {
       count++
     }
 
-    // 平行光：方向 = 指向光源的单位向量（与 gbuffer.frag 的 L 同语义），range = 0（无限远）
+    // 平行光
     for (const light of directionalLights) {
       light.getWorldPosition(tmpLightPos)
       const isMain = light === main
       if (isMain) {
         light.target.getWorldPosition(tmpTargetPos)
-        // 同步给 uLightDir/uLightColor（阴影光方向 / 强度的 legacy 引用，调试可用）
         gbufferShared.uLightDir.value.copy(tmpLightPos).sub(tmpTargetPos).normalize()
         gbufferShared.uLightColor.value.copy(light.color).multiplyScalar(light.intensity)
       }
@@ -87,14 +112,14 @@ export function GBufferLightSync() {
       if (isMain) shadowIndex = count - 1
     }
 
-    // 点光：位置取世界坐标；range = light.distance（0 = 无距离限制）
+    // 点光
     // TODO(作品集 · p1-light-ssr): 点光强度按 three 的 decay / 物理单位换算，与衰减模型对齐
     for (const light of pointLights) {
       light.getWorldPosition(tmpLightPos)
       writeLight(1, tmpLightPos, light.color, light.intensity, light.distance, tmpAxis.set(0, 0, 0), 0, 0)
     }
 
-    // 聚光：位置取世界坐标；光锥轴 = 从灯指向 target；内角/外角由 angle/penumbra 推出
+    // 聚光
     for (const light of spotLights) {
       light.getWorldPosition(tmpLightPos)
       light.target.getWorldPosition(tmpTargetPos)
@@ -104,7 +129,7 @@ export function GBufferLightSync() {
       writeLight(2, tmpLightPos, light.color, light.intensity, light.distance, tmpAxis, cosInner, cosOuter)
     }
 
-    // 环境兜底（IBL 未启用时）：全部 AmbientLight 求和
+    // 环境兜底（IBL 未启用时）
     tmpAmbient.setRGB(0, 0, 0)
     for (const light of ambientLights) {
       tmpColor.copy(light.color).multiplyScalar(light.intensity)
@@ -114,6 +139,23 @@ export function GBufferLightSync() {
 
     gbufferShared.uLightCount.value = count
     gbufferShared.uShadowLightIndex.value = shadowIndex
+
+    // ── S2：Clustered 构建（仅开启时，避免无谓开销）──
+    const clustered = gbufferShared.uClustered.value === 1
+    const clusterDebug = gbufferShared.uClusterDebug.value !== 0
+    if (clustered || clusterDebug) {
+      const lights: ClusterLightInput[] = []
+      for (const l of directionalLights) lights.push({ pos: l.getWorldPosition(tmpLightPos.clone()), range: 0 })
+      for (const l of pointLights) lights.push({ pos: l.getWorldPosition(tmpLightPos.clone()), range: l.distance })
+      for (const l of spotLights) lights.push({ pos: l.getWorldPosition(tmpLightPos.clone()), range: l.distance })
+
+      gl.getDrawingBufferSize(bufSize)
+      const result = buildClusterLights({ lights, camera: camera as THREE.PerspectiveCamera, width: bufSize.x, height: bufSize.y })
+      uploadClusterTextures(result.gridData, result.indicesData, result.totalClusters)
+      gbufferShared.uClusterDims.value.set(result.gridW, result.gridH, result.zSlices)
+      gbufferShared.uViewNear.value = camera.near
+      gbufferShared.uViewFar.value = camera.far
+    }
   })
 
   return null

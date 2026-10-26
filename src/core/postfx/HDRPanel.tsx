@@ -44,6 +44,12 @@ export const HDRPanel = observer(function HDRPanel() {
     { value: 'shadow:cascade', label: '阴影 · cascade 分层' },
   ]
 
+  // p1-light-ssr S2：Clustered 网格可视化（在 gbuffer.frag 内渲染，非 pass 截断）。
+  const clusterOptions: SelectOption<string>[] = [
+    { value: 'cluster:tiles', label: 'Clustered · tile 叠加' },
+    { value: 'cluster:heat', label: 'Clustered · 灯数热力' },
+  ]
+
   const debugOptions: SelectOption<string>[] = [
     { value: 'none', label: '完整链路' },
     // 两个调试出口本身不作为「截断点」；shadow-map 是辅助 pass，
@@ -53,10 +59,11 @@ export const HDRPanel = observer(function HDRPanel() {
       .map((name) => ({ value: name, label: `仅到 ${name} 为止` })),
     ...gbufferOptions,
     ...shadowOptions,
+    ...clusterOptions,
   ]
 
   return (
-    <Panel title="HDR 链路" scroll>
+    <Panel title="HDR 链路">
       <div className="ctl-row">
         <span className="ctl-label">RT 档位</span>
         <span className={`badge ${runtime.hdrActive ? 'badge-ok' : 'badge-warn'}`}>

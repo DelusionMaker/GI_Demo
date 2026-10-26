@@ -82,3 +82,16 @@ export function resolveShadowAtlasDebug(value: string): boolean {
 export function resolveShadowCascadeDebug(value: string): boolean {
   return value === 'shadow:cascade'
 }
+
+/**
+ * Clustered 调试视图（p1-light-ssr S2）：走正常 beauty 输出，在 gbuffer.frag 里把
+ * cluster 网格染成 tile 边框或灯数热力，不是「按 pass 名截断」。
+ * - 'cluster:tiles' → 1（tile 橙色叠加）
+ * - 'cluster:heat'  → 2（每 cluster 灯数热力）
+ * - 其它            → 0（关闭）
+ */
+export function resolveClusterDebug(value: string): number {
+  if (value === 'cluster:tiles') return 1
+  if (value === 'cluster:heat') return 2
+  return 0
+}

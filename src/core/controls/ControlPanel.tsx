@@ -11,7 +11,7 @@ export interface PanelProps {
 }
 
 /** 可折叠参数面板。移动端默认提供折叠能力，避免盖满画布。 */
-export function Panel({ title, children, onReset, defaultOpen = true, scroll }: PanelProps) {
+export function Panel({ title, children, onReset, defaultOpen = true, scroll = true }: PanelProps) {
   const [open, setOpen] = useState(defaultOpen)
   return (
     <div className="panel">

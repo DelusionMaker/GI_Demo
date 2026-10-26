@@ -508,7 +508,7 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 | 步骤 | 内容 | 验收点 | 状态 |
 | --- | --- | --- | --- |
 | **S1** | 多光源模型 + `GBufferLightSync` 扩展（收集全部灯：主平行光保留 + 点光/聚光，含位置/方向/角度/衰减）；`gbuffer.frag` 暴力遍历全部灯；调试视图（当前灯数 HUD / 光源列表） | 多盏点光在 Cornell/户外产生正确照明；无额外灯时画面与单主光一致（回归）；HUD 显示当前灯数 | 🟡 框架已落地（2026-10-26） |
-| **S2** | cluster grid 构建（**CPU**）：屏幕 tile × 深度切片（对数切分）；光源 → cluster 相交分配；上传 `uClusterLightGrid` / `uClusterLightIndices` 两张数据纹理；`ClusterDebugPass`（tile 叠加 + 每 cluster 灯数热力） | cluster 网格调试视图可见；每 cluster 灯数与手动统计一致；光源移动时分配实时更新 | ⬜ |
+| **S2** | cluster grid 构建（**CPU**）：屏幕 tile × 深度切片（对数切分）；光源 → cluster 相交分配；上传 `uClusterLightGrid` / `uClusterLightIndices` 两张数据纹理；`ClusterDebugPass`（tile 叠加 + 每 cluster 灯数热力） | cluster 网格调试视图可见；每 cluster 灯数与手动统计一致；光源移动时分配实时更新 | 🟡 框架已落地（2026-10-26） |
 | **S3** | Clustered 前向着色：`gbuffer.frag` 按 `fragCoord + viewDepth` 取 cluster → 取灯列表 → 循环；与 S1 暴力前向做 **A/B**（同场景同灯数亮度应一致，但逐像素循环次数下降）；perf 面板加「clustered vs brute」对照；GPU 计时出现剔除一行 | A/B 画面差异在噪声级；灯数高时 clustered 帧时间/耗时占比优于暴力；性能面板逐 pass 归因 | ⬜ |
 | **S4** | **SSR**（屏幕空间反射）：复用 gNormal/gAlbedo/DepthTexture 做 ray march；反射贡献混入高光/环境；SSR 开关 + 步进/最大距离/粗糙度衰减旋钮；`SSRDebugPass`（命中掩码 / 反射贡献） | 户外金属球出现环境反射；关闭时画面与接入前一致（零回归）；SSR 在性能面板逐 pass 归因 | ⬜ |
 | **S5** | 收尾：`src/site/demos.ts` 的 `light-ssr` 条目 `status → wip`；如实补 limitations（Forward-Clustered 非 Deferred、cluster 上限、SSR 屏幕空间穿帮/出屏缺失） | 站点该 demo 不再显示「规划中」；limitations 诚实 | ⬜ |
@@ -531,11 +531,54 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
   4. **HUD 灯数显示 / 光源列表面板**（S1 验收点的调试视图部分，未做）；
   5. **S2/S3 用 Clustered 剔除替换本暴力循环**（核心性能故事，真正的自写硬货）。
 
-#### 7.3.2 S2 设计要点（动手前）
+#### 7.3.2 S2 设计要点（动手前）—— Clustered 剔除（核心性能故事）
 
-- **cluster 划分**：屏幕按 16×16 像素分 tile；深度按**对数**切片（近密远疏，契合透视）。cluster AABB 由 tile 四角射线 × 深度切片近远平面求交得到。
-- **光源分配**：每盏灯（sphere/aabb）与 cluster 做相交测试，命中则把灯号追加到该 cluster 的全局索引数组，并在 `grid` 里记 `(offset, count)`。CPU 实现足够清晰、可讲；灯数几百内每帧可接受。
-- **`ClusterDebugPass`**：复用 `ShadowDebugPass` 的「全屏调试 + 橙色 tile 边框」模式；热力视图按每 cluster 灯数映射色阶。
+> S2 是 p1-light-ssr 里真正的「自写硬货」：把 S1 的暴力「遍历全部灯」换成「按 cluster 取本 cluster 的灯列表」。数据通路、MRT、多光源循环骨架都已就位，本步只新增「cluster 网格 + per-cluster 灯列表」与调试视图，并把 `gbuffer.frag` 的循环换成 cluster-fetch。
+
+**1) cluster grid 数据结构（CPU 端，每帧重建）**
+- 屏幕分块：`tileSize = 16` 像素 → `gridW = ceil(W/16)`、`gridH = ceil(H/16)`。
+- 深度分片：**对数切分**（近密远疏，契合透视）：
+  `slice = clamp( floor( log(viewZ / near) / log(far / near) * zSlices ), 0, zSlices-1 )`；`zSlices` 建议 24。
+- cluster 编号：`idx = tileX + tileY*gridW + slice*gridW*gridH`；总 cluster 数 = `gridW*gridH*zSlices`。
+- cluster AABB（视图空间）：用 tile 四角 + 该片近/远平面的 8 顶点 unproject（反投影）得到；光源（sphere）与 AABB 做相交测试即算命中。
+
+**2) 数据纹理方案（WebGL2 约束：无 SSBO）**
+- **灯数组不变**：S1 的 `uLightData0..3`（`vec4[64]`）继续作为「全局灯表」，cluster 列表只存**灯号索引**，不重复存灯数据。
+- **per-cluster 列表用两张数据纹理**（经典两贴图法），以 `texelFetch` 整数索引读取：
+  - `uClusterLightGrid`：每 cluster 一个 `RG` 项 = `(offset, count)`。建议 `RGBA32F`（offset→.x, count→.y，Broad 支持优于整数纹理）；尺寸 `(gridW*gridH, zSlices)`（或 `(1, totalClusters)`）。
+  - `uClusterLightIndices`：扁平全局索引数组（所有 cluster 的灯号首尾相接），`R32F`/整数纹理；按 `offset+i` 取灯号。纹理宽度取固定值（如 2048）分行，或单行 `width = 总索引数`（受 `MAX_TEXTURE_SIZE` 约束，超限分行）。
+- **辅助 uniform**：`uClusterDims`（vec3: gridW, gridH, zSlices）、`uViewNear`、`uViewFar`（算 slice 用）。
+- stage 4 切 WebGPU 后，本方案可平滑迁移到 **SSBO / compute 剔除**（DDGI 也会用 compute）——接口不变、仅存储后端替换。
+
+**3) `ClusterDebugPass`（自写，复用 `ShadowDebugPass` 模式）**
+- `selfManaged` 全屏 pass，读取 `DepthTexture` + `uClusterLightGrid` + 相机 near/far：
+  - **视图 A（tile 叠加）**：按 `fragCoord` 算 tile，画橙色 tile 边框（与 `ShadowDebugPass` 同款 overlay 风格），直观看分块。
+  - **视图 B（每 cluster 灯数热力）**：由 `fragCoord + viewZ` 算 cluster idx → 取 `count` → 映射色阶（蓝→红），一眼看出哪些 cluster 压力大。
+- 挂到 HUD 调试视图下拉（与现有 `hdrDebug` 截断机制一致），作为 S2 的可视化中间量（命中筛选标准 #2）。
+
+**4) 接入点（在 `gbuffer.frag` / `GBufferLightSync` 落子）**
+- **`gbuffer.frag`**：
+  - 取消 `main` 里预留的注释 `#include "./lib/gbuffer_lights.glsl"`，新建 `lib/gbuffer_lights.glsl` 放 cluster-fetch 辅助（`getClusterIndex(fragCoord, viewZ)` / `getClusterLightCount/Index()`）；
+  - 把现有 `for (i < MAX_LIGHTS; i >= uLightCount break)` 暴力循环，替换为：算 `idx` → `texelFetch(uClusterLightGrid, idx)` 取 `(offset, count)` → `for (k < count) { li = texelFetch(uClusterLightIndices, offset+k); ... 用 uLightData[li] ... }`；
+  - 保留 `uShadowLightIndex` 逻辑（主平行光阴影仍只对它生效）。
+- **`GBufferLightSync`**：在现有「填 `uLightData` + `uLightCount`」之外，**新增每帧 CPU 剔除**——遍历 cluster × 全局灯做 AABB 相交，写 `uClusterLightGrid` / `uClusterLightIndices`。这段 CPU 耗时本身就是性能故事的「另一面」，S3 要一并采进性能面板。
+- **代码已留的钩子**：`gbuffer.frag` 现有 `// TODO(p1-light-ssr · S2/S3 作品集自写): 用 Clustered 剔除替换本暴力循环` 与 `// TODO(p1-light-ssr): 多光源 cluster 调试视图接入此处；届时新增 #include "./lib/gbuffer_lights.glsl"`，正是 S2 的落子位。
+
+**5) 潜在坑（动手前须知）**
+- **对数深度切片边界**：near 处 cluster 极易过密（数万 cluster），先 clamp `zSlices` 与 near 下限；均匀切片在近景会爆，务必对数。
+- **动态索引**：`uLightData[li]`、`uClusterLightIndices[offset+k]` 是动态索引——GLSL ES 3.00 允许 uniform 数组动态索引，但循环需带常量上限 + `break`（已遵循）。
+- **整数纹理 vs RGBA32F**：若用 `R32UI` 需 `usampler2D` + `texelFetch`，部分驱动/格式易踩；先用 `RGBA32F` 存 `(offset, count)` 更稳（与 S1 的 vec4 数组风格一致）。
+- **CPU 剔除开销**：cluster×light 双重循环在灯多/分辨率高时会成为新瓶颈；这正是 S3 要呈现的「为什么用 clustered 而不是每像素遍历全部灯」对照素材——剔除耗时 vs 逐像素循环省下的耗时都要报。
+
+#### 7.3.2.1 S2 已落地（2026-10-26）—— 框架骨架，作品集段留 TODO
+
+- **实现文件**：`clusterCulling.ts`（CPU 保守范围分配 helper）、`GBufferLightSync.tsx`（每帧条件触发构建 + 上传两张 RGBA32F 数据纹理）、`lib/gbuffer_lights.glsl`（cluster-fetch 辅助 `getClusterIndex` / `clusterTexCoord` + 逐灯 `lightContribution`）、`gbuffer.frag`（uClustered 分支：暴力 / Clustered cluster-fetch 走同一 `lightContribution`）、`lib/gbuffer_debug.glsl`（cluster tile 叠加 + 灯数热力调试视图）。
+- **默认 uClustered = 0**：S1 暴力路径仍生效，现有 demo 零回归；把 `gbufferShared.uClustered.value` 置 1 即启用 Clustered 前向（S3 会把它接成 UI 旋钮 / URL 参数做 A/B，默认 1）。
+- **调试视图改为 in-shader**（与 cascade 一致，不走独立 `ClusterDebugPass`）：HDR 面板「调试视图」新增 `cluster:tiles` / `cluster:heat`，由 `uClusterDebug` 驱动；选任一即触发 cluster 构建，无需切 pass。
+- **留给作品集的 TODO（已在代码标注）**：
+  1. `clusterCulling.ts` 的「保守范围分配」改为更精确的 **sphere-frustum 相交**，或整段迁 **WebGPU compute**（阶段 4 后端切分点）；
+  2. `gbuffer_lights.glsl` 的 **多灯能量守恒 / 逐灯 specular 重要性采样**（当前朴素逐灯叠加）；点光/聚光 **物理衰减** 已在此标注 TODO；
+  3. S3 的 **A/B 验收**（同场景同灯数，clustered 与暴力亮度一致、逐像素循环次数下降）与 **CPU 剔除耗时进性能面板**。
 
 #### 7.3.3 S3 设计要点（动手前）
 

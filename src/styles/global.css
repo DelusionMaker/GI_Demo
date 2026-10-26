@@ -700,7 +700,7 @@ code {
 }
 
 .panel-body-scroll {
-  max-height: 40vh;
+  max-height: 30vh;
   overflow-y: auto;
 }
 

@@ -8,7 +8,9 @@ import {
   resolveGBufferDebug,
   resolveShadowAtlasDebug,
   resolveShadowCascadeDebug,
+  resolveClusterDebug,
 } from './hdrParams'
+import { gbufferShared } from './materials/gbufferShared'
 import { hdrStore } from './hdrStore'
 import { shadowParams } from './shadowParams'
 
@@ -72,9 +74,11 @@ export function HDRDriver() {
     const gbufferDebug = capabilitiesStore.mrt ? resolveGBufferDebug(knobs.hdrDebug) : null
     const shadowAtlasDebug = resolveShadowAtlasDebug(knobs.hdrDebug)
     const shadowCascadeDebug = resolveShadowCascadeDebug(knobs.hdrDebug)
+    const clusterDebug = resolveClusterDebug(knobs.hdrDebug)
     pipeline.setGBufferDebug(gbufferDebug)
     pipeline.setShadowAtlasDebug(shadowAtlasDebug)
     pipeline.shadow.debugCascade = shadowCascadeDebug
+    gbufferShared.uClusterDebug.value = clusterDebug
     core.debugPass =
       gbufferDebug === null && !shadowAtlasDebug && !shadowCascadeDebug
         ? resolveDebugPass(knobs.hdrDebug)

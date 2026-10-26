@@ -30,5 +30,31 @@ bool applyGbufferDebug(vec3 N, vec3 worldPos) {
     return true;
   }
 
+  // ── 调试：Clustered（p1-light-ssr S2 中间量视图）──
+  // 0=关 / 1=tile 叠加 / 2=每 cluster 灯数热力
+  if (uClusterDebug != 0) {
+    float viewZ = -(viewMatrix * vec4(worldPos, 1.0)).z; // 视图空间深度（正）
+    int cidx = getClusterIndex(gl_FragCoord.xy, viewZ, uClusterDims, uViewNear, uViewFar);
+    int count = int(texelFetch(uClusterLightGrid, clusterTexCoord(cidx), 0).g);
+    if (uClusterDebug == 1) {
+      // tile 叠加：橙色边框（与 ShadowDebugPass 同款 overlay 风格）
+      vec2 tileF = gl_FragCoord.xy / float(CLUSTER_TILE_SIZE);
+      vec2 f = fract(tileF);
+      float border = max(
+        max(step(0.94, f.x), step(f.x, 0.06)),
+        max(step(0.94, f.y), step(f.y, 0.06))
+      );
+      vec3 base = vec3(0.02, 0.02, 0.03);
+      gAlbedo = vec4(mix(base, vec3(0.98, 0.60, 0.20), clamp(border, 0.0, 1.0)), 1.0);
+    } else {
+      // 热力：灯数映射到蓝→红
+      float t = clamp(float(count) / 16.0, 0.0, 1.0);
+      vec3 cool = vec3(0.10, 0.30, 0.90);
+      vec3 hot = vec3(0.95, 0.20, 0.15);
+      gAlbedo = vec4(mix(cool, hot, t), 1.0);
+    }
+    return true;
+  }
+
   return false;
 }

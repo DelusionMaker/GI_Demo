@@ -65,6 +65,15 @@ uniform vec4 uLightData1[64];     // rgb = 颜色 × 强度，w = 类型（0 平
 uniform vec4 uLightData2[64];     // xyz = 方向（平行光=指向光源；聚光=光锥轴 从灯出），w = cosInner（聚光内角）
 uniform vec4 uLightData3[64];     // x = cosOuter（聚光外角），yzw 预留
 
+// ── Clustered（p1-light-ssr S2）──
+uniform int uClusterDebug;          // 0=关 / 1=tile 叠加 / 2=每 cluster 灯数热力
+uniform int uClustered;             // 1 = 启用 Clustered 前向（替换暴力循环）
+uniform vec3 uClusterDims;          // x=gridW, y=gridH, z=zSlices
+uniform float uViewNear;
+uniform float uViewFar;
+uniform sampler2D uClusterLightGrid;     // 每 cluster 存 (offset, count, 0, 0)
+uniform sampler2D uClusterLightIndices; // 扁平灯号索引（.r = 灯号）
+
 uniform mat4 viewMatrix; // three 按名自动上传；级联选择需要 view-space 深度
 
 in vec3 vWorldNormal;
@@ -87,7 +96,8 @@ const int MAX_LIGHTS = 64; // 必须与 gbufferShared.ts 的 MAX_LIGHTS 保持�
 #include "./lib/gbuffer_brdf.glsl"    // D/G/F + EnvBRDFApprox
 #include "./lib/gbuffer_ibl.glsl"     // iblDiffuse / iblSpecular
 #include "./lib/gbuffer_shadow.glsl"  // cascade / PCF / PCSS / shadowFactor
-#include "./lib/gbuffer_debug.glsl"   // 调试视图（法线 / cascade）
+#include "./lib/gbuffer_lights.glsl"  // 多光源循环 + cluster-fetch（须排在 debug 之前）
+#include "./lib/gbuffer_debug.glsl"   // 调试视图（法线 / cascade / cluster）
 
 void main() {
   // baseColor 贴图 + alphaTest 必须在写 MRT 之前完成：
@@ -121,8 +131,6 @@ void main() {
   gMRAO = vec4(metalness, roughness, 1.0, 0.0);
 
   // ── 调试视图（命中则写 gAlbedo 并提前结束）──
-  // TODO(p1-light-ssr): 多光源 cluster 调试视图接入此处；届时新增
-  //   #include "./lib/gbuffer_lights.glsl"（多光源循环 + cluster fetch）。
   if (applyGbufferDebug(N, vWorldPos)) return;
 
   // ── gAlbedo：Cook-Torrance 直接光（前向 PBR，多光源；gAlbedo = 最终着色）──
@@ -130,72 +138,26 @@ void main() {
   vec3 F0 = mix(vec3(0.04), albedo, metalness);     // 介电质 F0≈0.04，金属用 albedo
   float NoV = max(dot(N, V), 1e-4);
 
-  // 多光源（p1-light-ssr S1：暴力前向，逐个遍历全部灯）
-  // TODO(p1-light-ssr · S2/S3 作品集自写): 用 Clustered 剔除替换本暴力循环——
-  //   改为「按 fragCoord + viewDepth 取 cluster → 取本 cluster 的灯列表」，
-  //   循环次数从 uLightCount 降到「本 cluster 灯数」。S1 仅做基线多光源。
+  // 多光源（p1-light-ssr S1→S2）：uClustered 决定走暴力循环还是 Clustered cluster-fetch。
+  // 两条路径都调用 lightContribution()（见 lib/gbuffer_lights.glsl），逐字节等价，仅循环来源不同。
+  // TODO(p1-light-ssr · S3 作品集自写): 接 UI 旋钮 / URL 参数做 A/B（同场景同灯数，亮度应一致）。
   vec3 direct = vec3(0.0);
-  for (int i = 0; i < MAX_LIGHTS; i++) {
-    if (i >= uLightCount) break;
-
-    vec3  lPos    = uLightData0[i].xyz;
-    float lRange  = uLightData0[i].w;
-    vec3  lColor  = uLightData1[i].rgb;
-    float lType   = uLightData1[i].w; // 0 = 平行光 / 1 = 点光 / 2 = 聚光
-    vec3  lDir    = uLightData2[i].xyz; // 平行光=指向光源；聚光=光锥轴(从灯出)
-    float lCosIn  = uLightData2[i].w;
-    float lCosOut = uLightData3[i].x;
-
-    vec3 L;
-    float attenuation = 1.0;
-    if (lType < 0.5) {
-      // 平行光：方向恒定，无距离衰减
-      L = normalize(lDir);
-    } else {
-      vec3 toLight = lPos - vWorldPos;
-      float dist = length(toLight);
-      L = toLight / max(dist, 1e-4);
-      // TODO(作品集 · p1-light-ssr): 物理正确的点光/聚光衰减（inverse-square + 距离窗）。
-      //   当前基线用 cheap windowed inverse-square，仅保证可跑；正式版改成
-      //   1/d^2 配合 sphere/disc 面积光近似与软截断，并讲清能量守恒。
-      float window = (lRange > 0.0)
-        ? pow(clamp(1.0 - pow(dist / lRange, 4.0), 0.0, 1.0), 2.0)
-        : 1.0;
-      attenuation = window / (dist * dist + 1.0);
+  if (uClustered == 1) {
+    float viewZ = -(viewMatrix * vec4(vWorldPos, 1.0)).z; // 视图空间深度（正）
+    int cidx = getClusterIndex(gl_FragCoord.xy, viewZ, uClusterDims, uViewNear, uViewFar);
+    vec2 gc = texelFetch(uClusterLightGrid, clusterTexCoord(cidx), 0).rg;
+    int offset = int(gc.x);
+    int count = int(gc.y);
+    for (int k = 0; k < MAX_LIGHTS; k++) {
+      if (k >= count) break;
+      int li = int(texelFetch(uClusterLightIndices, clusterTexCoord(offset + k), 0).r);
+      direct += lightContribution(li, N, V, NoV, albedo, metalness, roughness, F0, vWorldPos);
     }
-
-    // 聚光锥角（方向从灯射出，与 -L 比较）
-    if (lType > 1.5) {
-      float cosAngle = dot(-L, normalize(lDir));
-      attenuation *= smoothstep(lCosOut, lCosIn, cosAngle);
+  } else {
+    for (int i = 0; i < MAX_LIGHTS; i++) {
+      if (i >= uLightCount) break;
+      direct += lightContribution(i, N, V, NoV, albedo, metalness, roughness, F0, vWorldPos);
     }
-
-    // ── 逐灯 Cook-Torrance（下列即「作品集自写段」：复用 D/G/F，逐灯累加）──
-    // TODO(作品集): 在此细化多灯能量守恒（kD/F 的复用）、逐灯 specular 重要性采样；
-    //   当前为朴素逐灯叠加。
-    float NoL = max(dot(N, L), 0.0);
-    if (NoL <= 0.0) continue;
-
-    vec3 H = normalize(L + V);
-    float NoH = max(dot(N, H), 0.0);
-    float VoH = max(dot(V, H), 0.0);
-
-    float D = distributionGGX(NoH, roughness);
-    float G = geometrySmith(NoV, NoL, roughness);
-    vec3  F = fresnelSchlick(VoH, F0);
-
-    vec3 specular = (D * G * F) / (4.0 * NoV * NoL + 1e-4);
-    vec3 kD = (vec3(1.0) - F) * (1.0 - metalness);
-    vec3 diffuse = kD * albedo / PI;
-
-    vec3 contribution = (diffuse + specular) * lColor * NoL * attenuation;
-
-    // 阴影：仅主平行光（阴影投射光）生效
-    if (i == uShadowLightIndex && lType < 0.5) {
-      contribution *= shadowFactor(N, L, vWorldPos);
-    }
-
-    direct += contribution;
   }
 
   // 白炉测试：关掉直接光，只留环境（环境在 ibl* 内视为纯白）
