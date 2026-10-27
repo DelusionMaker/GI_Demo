@@ -1,7 +1,12 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { gbufferShared, MAX_LIGHTS } from './materials/gbufferShared'
-import { buildClusterLights, CLUSTER_TEX_WIDTH, type ClusterLightInput } from './clusterCulling'
+import {
+  buildClusterLights,
+  CLUSTER_TEX_WIDTH,
+  type ClusterBuildResult,
+  type ClusterLightInput,
+} from './clusterCulling'
 
 // 模块级临时对象：每帧遍历场景图 / 重建 cluster 时不产生分配
 const tmpLightPos = new THREE.Vector3()
@@ -16,30 +21,62 @@ const pointLights: THREE.PointLight[] = []
 const spotLights: THREE.SpotLight[] = []
 const ambientLights: THREE.AmbientLight[] = []
 
-// cluster 数据纹理：每次构建都重建（仅在 clustered/调试开启时触发，可接受；
-// 作品集优化点：尺寸不变时复用同一张纹理并 .set，避免每帧 dispose/上传开销）
-let gridTex: THREE.DataTexture | null = null
-let indicesTex: THREE.DataTexture | null = null
+// cluster 构建的输入同样池化：灯数不变时每帧零分配（否则每盏灯每帧 new 一个 Vector3）
+const clusterLightPool: ClusterLightInput[] = []
+const clusterLights: ClusterLightInput[] = []
 
-function uploadClusterTextures(gridData: Float32Array, indicesData: Float32Array, totalClusters: number) {
-  const gw = Math.ceil(totalClusters / CLUSTER_TEX_WIDTH) || 1
-  const totalIndices = indicesData.length / 4
-  const iw = Math.ceil(Math.max(totalIndices, 1) / CLUSTER_TEX_WIDTH) || 1
+function pushClusterLight(pos: THREE.Vector3, range: number) {
+  const index = clusterLights.length
+  let entry = clusterLightPool[index]
+  if (!entry) {
+    entry = { pos: new THREE.Vector3(), range }
+    clusterLightPool[index] = entry
+  }
+  entry.pos.copy(pos)
+  entry.range = range
+  clusterLights.push(entry)
+}
 
-  gridTex?.dispose()
-  // 类型边界：TS 5.x 把 Float32Array 默认为 ArrayBufferLike，与 three 的 BufferSource(ArrayBuffer) 不兼容，此处收窄
-  gridTex = new THREE.DataTexture(gridData as unknown as Float32Array<ArrayBuffer>, CLUSTER_TEX_WIDTH, gw, THREE.RGBAFormat, THREE.FloatType)
-  gridTex.minFilter = gridTex.magFilter = THREE.NearestFilter
-  gridTex.generateMipmaps = false
-  gridTex.needsUpdate = true
-  gbufferShared.uClusterLightGrid.value = gridTex
+/**
+ * cluster 数据纹理槽。
+ *
+ * 行数不变时复用同一张纹理，只置 needsUpdate 让 three 重传数据；
+ * 只有分辨率变化（行数变化）才 dispose + 重建，避免每帧创建 / 销毁 GL 纹理对象。
+ */
+interface ClusterTextureSlot {
+  texture: THREE.DataTexture | null
+  rows: number
+}
 
-  indicesTex?.dispose()
-  indicesTex = new THREE.DataTexture(indicesData as unknown as Float32Array<ArrayBuffer>, CLUSTER_TEX_WIDTH, iw, THREE.RGBAFormat, THREE.FloatType)
-  indicesTex.minFilter = indicesTex.magFilter = THREE.NearestFilter
-  indicesTex.generateMipmaps = false
-  indicesTex.needsUpdate = true
-  gbufferShared.uClusterLightIndices.value = indicesTex
+function uploadDataTexture(
+  slot: ClusterTextureSlot,
+  data: Float32Array<ArrayBuffer>,
+  rows: number,
+): THREE.DataTexture {
+  if (slot.texture && slot.rows === rows) {
+    slot.texture.needsUpdate = true
+    return slot.texture
+  }
+
+  slot.texture?.dispose()
+  // 尺寸必须与数据长度严格一致：DataTexture 按 width × height 整块上传，
+  // 数据不足会触发 texSubImage2D INVALID_OPERATION（见 clusterCulling.ts 的 textureRows）
+  const texture = new THREE.DataTexture(data, CLUSTER_TEX_WIDTH, rows, THREE.RGBAFormat, THREE.FloatType)
+  texture.minFilter = texture.magFilter = THREE.NearestFilter
+  texture.generateMipmaps = false
+  texture.needsUpdate = true
+  slot.texture = texture
+  slot.rows = rows
+  return texture
+}
+
+const gridSlot: ClusterTextureSlot = { texture: null, rows: 0 }
+const indicesSlot: ClusterTextureSlot = { texture: null, rows: 0 }
+
+function uploadClusterTextures(result: ClusterBuildResult) {
+  // 数据缓冲由 clusterCulling 跨帧复用，同样的数组内容每帧都变，故都要标记 needsUpdate
+  gbufferShared.uClusterLightGrid.value = uploadDataTexture(gridSlot, result.gridData, result.gridTexRows)
+  gbufferShared.uClusterLightIndices.value = uploadDataTexture(indicesSlot, result.indicesData, result.indicesTexRows)
 }
 
 /**
@@ -144,14 +181,14 @@ export function GBufferLightSync() {
     const clustered = gbufferShared.uClustered.value === 1
     const clusterDebug = gbufferShared.uClusterDebug.value !== 0
     if (clustered || clusterDebug) {
-      const lights: ClusterLightInput[] = []
-      for (const l of directionalLights) lights.push({ pos: l.getWorldPosition(tmpLightPos.clone()), range: 0 })
-      for (const l of pointLights) lights.push({ pos: l.getWorldPosition(tmpLightPos.clone()), range: l.distance })
-      for (const l of spotLights) lights.push({ pos: l.getWorldPosition(tmpLightPos.clone()), range: l.distance })
+      clusterLights.length = 0
+      for (const l of directionalLights) pushClusterLight(l.getWorldPosition(tmpLightPos), 0)
+      for (const l of pointLights) pushClusterLight(l.getWorldPosition(tmpLightPos), l.distance)
+      for (const l of spotLights) pushClusterLight(l.getWorldPosition(tmpLightPos), l.distance)
 
       gl.getDrawingBufferSize(bufSize)
-      const result = buildClusterLights({ lights, camera: camera as THREE.PerspectiveCamera, width: bufSize.x, height: bufSize.y })
-      uploadClusterTextures(result.gridData, result.indicesData, result.totalClusters)
+      const result = buildClusterLights({ lights: clusterLights, camera: camera as THREE.PerspectiveCamera, width: bufSize.x, height: bufSize.y })
+      uploadClusterTextures(result)
       gbufferShared.uClusterDims.value.set(result.gridW, result.gridH, result.zSlices)
       gbufferShared.uViewNear.value = camera.near
       gbufferShared.uViewFar.value = camera.far

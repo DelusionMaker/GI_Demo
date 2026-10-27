@@ -14,17 +14,55 @@ export interface ClusterLightInput {
 }
 
 export interface ClusterBuildResult {
-  /** RGBA32F，长度 = totalClusters * 4，每 cluster 存 (offset, count, 0, 0) */
+  /**
+   * RGBA32F，每 cluster 存 (offset, count, 0, 0)。
+   * 长度已按 CLUSTER_TEX_WIDTH 向上对齐（尾行零填充），可直接作为 DataTexture 的数据源。
+   * 注意：该缓冲会被下次构建原地覆盖复用，不要跨帧持有。
+   */
   gridData: Float32Array<ArrayBuffer>
-  /** RGBA32F，长度 = totalIndices * 4，每槽 .r = 灯号 */
+  /** RGBA32F，每槽 .r = 灯号；同上，长度已对齐纹理尺寸，且同样跨帧复用 */
   indicesData: Float32Array<ArrayBuffer>
   gridW: number
   gridH: number
   zSlices: number
   totalClusters: number
+  /** 两张数据纹理的高度（行数），配合 CLUSTER_TEX_WIDTH 构造 DataTexture */
+  gridTexRows: number
+  indicesTexRows: number
 }
 
+/**
+ * 数据纹理所需行数：把 texel 数向上取整到 CLUSTER_TEX_WIDTH 的整数倍。
+ *
+ * 必须补齐：DataTexture 上传时按 width × height 整块 texSubImage2D，
+ * 数据长度不足会触发 WebGL INVALID_OPERATION（ArrayBufferView not big enough for request）。
+ */
+const textureRows = (texels: number) => Math.max(1, Math.ceil(texels / CLUSTER_TEX_WIDTH))
+
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v)
+
+/**
+ * 复用的工作缓冲（模块级）。buildClusterLights 是同步单线程调用，
+ * 尺寸不变时直接复用同一批数组：正常帧零分配，仅在分辨率 / 灯数变化时重建。
+ */
+let countsBuf = new Int32Array(0)
+let offsetsBuf = new Int32Array(0)
+let rangesBuf = new Int32Array(0)
+let cursorBuf = new Int32Array(0)
+let gridBuf = new Float32Array(0)
+let indicesBuf = new Float32Array(0)
+
+function int32Buffer(current: Int32Array<ArrayBuffer>, length: number): Int32Array<ArrayBuffer> {
+  return current.length === length ? current : new Int32Array(length)
+}
+
+function float32Buffer(current: Float32Array<ArrayBuffer>, length: number): Float32Array<ArrayBuffer> {
+  return current.length === length ? current : new Float32Array(length)
+}
+
+/** 临时向量同样复用：函数同步执行，不会被并发打断 */
+const viewCenter = new THREE.Vector3()
+const viewCorner = new THREE.Vector3()
 
 /**
  * 构建 Clustered 的 per-cluster 灯列表（CPU 基线）—— 作品集可优化 / 迁 GPU compute。
@@ -56,13 +94,12 @@ export function buildClusterLights(opts: {
   const proj = camera.projectionMatrix // 视图空间 → 裁剪/NDC（applyMatrix4 已含透视除法）
   const viewInv = camera.matrixWorldInverse
 
-  const counts = new Int32Array(totalClusters)
-  const offsets = new Int32Array(totalClusters)
+  // counts / cursor 是累加语义，复用前必须清零；offsets 与 ranges 每帧全量覆盖
+  const counts = (countsBuf = int32Buffer(countsBuf, totalClusters))
+  counts.fill(0)
+  const offsets = (offsetsBuf = int32Buffer(offsetsBuf, totalClusters))
   // 每盏灯的覆盖范围（6 个 int：tx0,ty0,tz0,tx1,ty1,tz1），避免 Pass B 重算
-  const ranges = new Int32Array(lights.length * 6)
-
-  const center = new THREE.Vector3()
-  const corner = new THREE.Vector3()
+  const ranges = (rangesBuf = int32Buffer(rangesBuf, lights.length * 6))
 
   // ── Pass A：统计每 cluster 灯数 + 记录每灯范围 ──
   for (let li = 0; li < lights.length; li++) {
@@ -75,14 +112,14 @@ export function buildClusterLights(opts: {
     let tz1 = zs - 1
 
     if (light.range > 0) {
-      center.copy(light.pos).applyMatrix4(viewInv)
+      viewCenter.copy(light.pos).applyMatrix4(viewInv)
       const r = light.range
-      const minX = center.x - r
-      const maxX = center.x + r
-      const minY = center.y - r
-      const maxY = center.y + r
-      const minZ = center.z - r
-      const maxZ = center.z + r // 视图空间 z 为负，越小越远
+      const minX = viewCenter.x - r
+      const maxX = viewCenter.x + r
+      const minY = viewCenter.y - r
+      const maxY = viewCenter.y + r
+      const minZ = viewCenter.z - r
+      const maxZ = viewCenter.z + r // 视图空间 z 为负，越小越远
 
       // 8 角投影到 NDC，取 xy / 深度范围
       let ndcMinX = Infinity
@@ -94,12 +131,12 @@ export function buildClusterLights(opts: {
       for (let cx = 0; cx < 2; cx++) {
         for (let cy = 0; cy < 2; cy++) {
           for (let cz = 0; cz < 2; cz++) {
-            corner.set(cx ? maxX : minX, cy ? maxY : minY, cz ? maxZ : minZ).applyMatrix4(proj)
-            ndcMinX = Math.min(ndcMinX, corner.x)
-            ndcMaxX = Math.max(ndcMaxX, corner.x)
-            ndcMinY = Math.min(ndcMinY, corner.y)
-            ndcMaxY = Math.max(ndcMaxY, corner.y)
-            const depth = -corner.z // 视图空间深度（正）
+            viewCorner.set(cx ? maxX : minX, cy ? maxY : minY, cz ? maxZ : minZ).applyMatrix4(proj)
+            ndcMinX = Math.min(ndcMinX, viewCorner.x)
+            ndcMaxX = Math.max(ndcMaxX, viewCorner.x)
+            ndcMinY = Math.min(ndcMinY, viewCorner.y)
+            ndcMaxY = Math.max(ndcMaxY, viewCorner.y)
+            const depth = -viewCorner.z // 视图空间深度（正）
             depthMin = Math.min(depthMin, depth)
             depthMax = Math.max(depthMax, depth)
           }
@@ -145,9 +182,14 @@ export function buildClusterLights(opts: {
   const totalIndices = acc
 
   // ── Pass B：填灯号索引 ──
-  const gridData = new Float32Array(totalClusters * 4)
-  const indicesData = new Float32Array(Math.max(totalIndices, 1) * 4)
-  const cursor = new Int32Array(totalClusters)
+  // 按纹理尺寸分配（而非逻辑长度）：多出的尾部 texel 保持 0，只用于满足 texSubImage2D 的整块上传
+  const gridTexRows = textureRows(totalClusters)
+  const indicesTexRows = textureRows(Math.max(totalIndices, 1))
+  const gridData = (gridBuf = float32Buffer(gridBuf, gridTexRows * CLUSTER_TEX_WIDTH * 4))
+  const indicesData = (indicesBuf = float32Buffer(indicesBuf, indicesTexRows * CLUSTER_TEX_WIDTH * 4))
+  // 每个 cluster 的写入游标（累加语义）必须清零；尾部 padding 与未达上限的 texel 保持 0
+  const cursor = (cursorBuf = int32Buffer(cursorBuf, totalClusters))
+  cursor.fill(0)
   for (let li = 0; li < lights.length; li++) {
     const tx0 = ranges[li * 6 + 0]
     const ty0 = ranges[li * 6 + 1]
@@ -175,5 +217,14 @@ export function buildClusterLights(opts: {
     gridData[i * 4 + 1] = counts[i]
   }
 
-  return { gridData, indicesData, gridW: gw, gridH: gh, zSlices: zs, totalClusters }
+  return {
+    gridData,
+    indicesData,
+    gridW: gw,
+    gridH: gh,
+    zSlices: zs,
+    totalClusters,
+    gridTexRows,
+    indicesTexRows,
+  }
 }
