@@ -21,9 +21,9 @@ vec3 iblDiffuse(vec3 N, vec3 F0, vec3 albedo, float metalness) {
   // irradiance ≈ 取很高 LOD（接近均匀）的环境采样
   vec3 irradiance = (uFurnace == 1) ? vec3(1.0) : textureLod(uEnvMap, N, IBL_DIFFUSE_LOD).rgb;
   vec3 kD = (vec3(1.0) - F0) * (1.0 - metalness); // 能量守恒：金属无漫反射
-  // 高 LOD 的盒式 mip 给出的是「平均 radiance」，不是 cosine-weighted irradiance。
-  // 对常数环境，irradiance = π × radiance；这里补 π，正好与漫反射 BRDF 的 1/π 抵消。
-  // 这样白炉（环境 = 1、albedo = 1）的漫反射输出 ≈ kD，而不是 kD/π。
+  // 高 LOD 的盒式 mip 给出的是「平均 radiance」而非 cosine-weighted irradiance。
+  // 漫反射 BRDF 自带 1/π，常数环境下 irradiance = π × radiance，两者恰好抵消，
+  // 故最终直接为 L_avg · albedo · kD（无需再显式补 π，原注释有误）。
   return irradiance * kD * albedo;
 }
 

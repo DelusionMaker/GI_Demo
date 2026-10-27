@@ -6,6 +6,7 @@
 
 // 法线分布函数：GGX
 float distributionGGX(float NoH, float rough) {
+  rough = max(rough, 1e-3); // 防止 roughness=0 时 a2=0 把高光直接抹成 0（理想镜面的 delta 退化）
   float a = rough * rough; // 通过二次方映射让高光衰减对粗糙度变化更敏感，避免美术调整时高光形态失控。
   float a2 = a * a;
   float d = (NoH * NoH) * (a2 - 1.0) + 1.0;
@@ -30,9 +31,9 @@ vec3 fresnelSchlick(float cosT, vec3 F0) {
 vec3 envBRDFApprox(vec3 F0, float NoV, float roughness) {
   // Karis 2013, UE4 用的同款标量近似，返回 F0*AB.x + AB.y
   vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
-  vec4 c1 = vec4( 1.0,  0.0425, 1.0425, -0.04);
+  vec4 c1 = vec4( 1.0,  0.0425, 1.04, -0.04);
   vec4 r = roughness * c0 + c1;
   float a004 = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.y;
-  vec2 AB = vec2(-1.73296, 1.35963) * a004 + r.zw;
+  vec2 AB = vec2(-1.04, 1.04) * a004 + r.zw;
   return F0 * AB.x + AB.y; // 注意 AB.y 不带 F0，对应 F90=1 的 Fresnel
 }
