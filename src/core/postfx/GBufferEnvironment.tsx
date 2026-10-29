@@ -4,10 +4,7 @@ import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js'
 import { capabilitiesStore } from '../capabilities'
-import { gbufferShared } from './materials/gbufferShared'
-
-/** 256² cube → log2(256) = 8 级 mip；gbuffer.frag 的 ENV_MAX_LOD 必须与之一致 */
-const ENV_SIZE = 256
+import { ENV_SIZE, gbufferShared } from './materials/gbufferShared'
 
 /**
  * G-buffer 材质的环境贴图（p1-pbr-ibl 的 IBL 原料）。

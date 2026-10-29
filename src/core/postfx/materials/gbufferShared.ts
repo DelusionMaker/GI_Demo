@@ -16,6 +16,15 @@ import * as THREE from 'three'
 /** 多光源数组容量（必须与 gbuffer.frag 的 MAX_LIGHTS 一致）。p1-light-ssr S1 用 uniform 数组承载，S2/S3 Clustered 改走数据纹理后可下调。 */
 export const MAX_LIGHTS = 64
 
+/**
+ * 环境立方体贴图边长（256² → log2(256) = 8，即 9 级 mip / LOD 0–8）。
+ *
+ * 单一来源：`GBufferEnvironment` 用它建 RT，`uEnvMaxLod` 由它推导。
+ * 之前 shader 里另写死一份 `ENV_MAX_LOD = 8`，改 cube 尺寸会静默错配
+ * （变大 → 最粗级不再是 8，粗糙反射莫名变锐；变小 → LOD 被 clamp，调参失效）。
+ */
+export const ENV_SIZE = 256
+
 /** 新建一张存 cluster 灯列表用的 RGBA32F 数据纹理（Nearest 过滤，无需线性过滤 float 扩展） */
 function makeClusterTexture(): THREE.DataTexture {
   const tex = new THREE.DataTexture(new Float32Array(4), 1, 1, THREE.RGBAFormat, THREE.FloatType)
@@ -65,6 +74,12 @@ export const gbufferShared = {
 
   /** 环境贴图：CubeCamera 捕获的立方体贴图（带 mipmap），世界空间方向直接采样 */
   uEnvMap: { value: null as THREE.Texture | null },
+  /**
+   * 环境 cube 的最大 mip LOD（= log2(ENV_SIZE)）。
+   * iblSpecular 的 roughness→LOD 映射与 iblDiffuse 的近似级都从它派生，
+   * shader 不再硬编码 8，改 ENV_SIZE 时自动跟随。
+   */
+  uEnvMaxLod: { value: Math.log2(ENV_SIZE) },
   /**
    * 天空背景：原始 equirect HDR（2D），只给 `SkyMaterial` 用。
    * IBL 仍走 256² cube + mip；天空保留 1K 原图，避免背景被 cube 分辨率拖糊。

@@ -34,6 +34,7 @@ uniform vec3 uAmbient;     // 环境兜底（IBL 未启用时）：颜色 × 强
 
 // ── IBL（p1 算法段使用；GBufferEnvironment + demo 旋钮提供，见 lib/gbuffer_ibl.glsl）──
 uniform samplerCube uEnvMap; // CubeCamera 捕获的立方体贴图（带 mipmap，世界空间方向直接采样）
+uniform float uEnvMaxLod;    // cube 的最大 mip LOD（= log2(ENV_SIZE)），由 gbufferShared 按实际尺寸注入
 uniform float uEnvIntensity; // 环境强度倍率
 uniform int uHasEnv;         // 1 = 环境贴图就绪且开关打开
 uniform int uFurnace;        // 1 = 白炉测试：环境视为纯白、直接光关闭
@@ -85,10 +86,6 @@ layout(location = 1) out vec4 gNormal;
 layout(location = 2) out vec4 gMRAO;
 
 const float PI = 3.14159265359;
-// 漫反射 IBL 的 irradiance 近似 LOD：越高 = 环境越"抹平"，越接近 cosine-weighted irradiance 的廉价近似。
-// 调参旋钮：环境高频细节越多越该调高；RoomEnvironment 这类平滑环境 7 即可。
-const float ENV_MAX_LOD = 8.0;       // 256² cube → log2(256) = 8
-const float IBL_DIFFUSE_LOD = ENV_MAX_LOD - 1.0;
 
 const int MAX_LIGHTS = 64; // 必须与 gbufferShared.ts 的 MAX_LIGHTS 保持一致
 
