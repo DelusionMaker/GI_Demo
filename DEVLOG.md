@@ -6,6 +6,156 @@
 > **追加规则**：最新条目放最上面（打开即见最新进展）。每条按统一模板：
 > 目标 → 改动文件 → 关键决策 → 踩坑与修复 → 验证 → 遗留/下一步。
 > 任务 ID 与 TODO.md 对齐（如 `p0-hdr`、`p1-pbr-ibl`）。
+> **排期口径**：与 TODO.md 一致 —— 不写工期估算与截止日；条目日期是**实际发生日期**，不是计划日期。
+
+---
+
+## 2026-11-03 · 文档同步：补齐四个未入账提交、进度快照与「完成即止」排期口径
+
+### 目标
+
+把 10-25 之后四个未记录的提交（阴影 tile clamp、`envBRDFApprox` 系数、cluster 数据纹理越界、IBL 采样细化）补进本文件；让 TODO 与代码状态对齐（`uClustered` 默认值、`p1-light-ssr` 实际进度、`p0-hdr` 验收清单、构建体积）；同时把排期口径从「工作日估算 + 14–20 周主线」改为**不设期限、完成即止**。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `DEVLOG.md` | 改造 | 补 4 条实施记录（2026-10-25 / 10-27 ×2 / 10-29）+ 本条 |
+| `TODO.md` | 改造 | 新增「〇、进度快照」；删除各阶段周数；订正 `uClustered` 默认值、构建体积、`p1-light-ssr` 状态；勾销 p0-hdr 3.5 验收清单 |
+
+### 关键决策
+
+1. **排期不写期限**：原估算为 14–20 周，实测 9-23 起 6 周推进量约合 2.6 个「计划周」（含两次返工：pipeline 被实现两遍、MRT 探测自我否决）。估算体系已失去参考价值，继续挂着周数只会制造错误预期，故改为「任务 → 验收点 → 完成」，只排顺序不排日期。
+2. **无期限不等于无优先级**：顺序仍按依赖与收益排（底座 → 直接光 → 屏幕空间 → GI 主线 → 深水区），并把「真实 GPU 性能采样」「WebGPU 冒烟」这类低成本高收益项提前 —— 二者一个是筛选标准第 3 条的唯一证据，一个是阶段 4 的单点风险。
+3. **状态如实**：`p1-light-ssr` 只有 S1/S2 骨架，不能记成「阶段 1 完成」；`uClustered` 代码默认已为 1 却**没有任何 UI / URL 开关**，属「实现超前于接线」，写进 TODO 等 S3 收口。
+
+### 踩坑与修复
+
+1. **DEVLOG 落后提交历史 4 个提交**：`git log` 是唯一可信时间线。写文档前应比对「提交日期」与「DEVLOG 顶部条目日期」，而不是凭记忆。
+2. **文档里的具体数值最容易腐烂**：`uClustered` 默认值、构建体积、白炉读数、测试通过数都发生过漂移。凡写死数字，必须同时记录出处与复核方式（本条下面的验证段落即是）。
+
+### 验证（HEAD `5e57906`，2026-11-03 复跑）
+
+- `npm run typecheck`：通过（0 错误）。
+- `npm run build`：通过（665 modules；1,375.00 kB / gzip 396.99 kB，含既有体积告警）。
+- `npx playwright test`：**15 passed**（此前记录为 14 passed + 1 skipped，`test.fixme` 已全部转正）。
+- 白炉：**0.978 / -2.20%**，与 `envBRDFApprox` 修正前的记录完全一致 —— 说明 10-27 / 10-29 的三次算法改动没有破坏能量守恒判据。
+- 其余实测（与旧记录有偏移，属算法修正的预期结果，非回归）：户外 IBL A/B **8.478 / 58.89%**（旧 12.166）、阴影 A/B **0.83 / 0.55%**（旧 0.97，噪声基线 0.00）、自建链 vs 直出线性域 **0.186 / 0.241%**（旧 0.255）、Bloom A/B **59.884 / 76.35%**（旧 60.918）。
+
+### 遗留 / 下一步
+
+1. **性能数据仍是零**：`README.md` 性能表整列「待填」，需在真实 GPU 上采 Bloom 开/关、DPR 阶梯、逐 pass GPU ms。
+2. **`p1-light-ssr` S3/S4 未开工**：cluster 已有实现但无 A/B、无剔除耗时归因；SSR 完全没开始。
+3. **WebGPU 未做任何实测**：应在阶段 2/3 之间插入一次后端冒烟，把阶段 4 的风险提前暴露。
+
+---
+
+## 2026-10-29 · p1-pbr-ibl 收口：漫反射分数 LOD、镜面掠射收拢、LOD 上限单一来源
+
+### 目标
+
+处理 IBL 的三处缺陷：漫反射在高 LOD 上的块状过渡、粗糙表面掠射角的错位反射、cube 尺寸与 shader 内写死 LOD 上限的双份硬编码。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/shaders/lib/gbuffer_ibl.glsl` | 改造 | 漫反射改分数 LOD；镜面 `R` 按 roughness² 向 N 收拢；变量改名 `irradianceOverPi` 并补 kD 用 F0 的原因 |
+| `src/core/postfx/shaders/gbuffer.frag` | 改造 | 删除 `ENV_MAX_LOD` / `IBL_DIFFUSE_LOD` 常量，改用 uniform `uEnvMaxLod` |
+| `src/core/postfx/materials/gbufferShared.ts` | 改造 | 新增 `ENV_SIZE = 256` 单一来源与 `uEnvMaxLod` |
+| `src/core/postfx/GBufferEnvironment.tsx` | 改造 | 从 `gbufferShared` 取 `ENV_SIZE`，删除本地副本 |
+
+### 关键决策
+
+1. **漫反射必须用分数 LOD**：原 `IBL_DIFFUSE_LOD` 是整数 7（2×2/面，仅 24 个独立纹素）。整数 LOD 的三线性 frac 为 0，等于退化成单级双线性，漫反射在 cube 面之间出现块状过渡。改为 `max(uEnvMaxLod - 2.5, 0)`（当前 = 5.5），保住 mip 间插值。
+2. **镜面掠射收拢**：`R = normalize(mix(R, N, roughness²))`（与 three `getIBLRadiance` 同款）。粗糙表面在掠射时 `reflect()` 会贴近切线甚至指向法线背面，采到与当前半球无关的环境，表现为边缘「错位反射」。
+3. **LOD 上限收敛为单一来源**：cube 尺寸决定 mip 级数，shader 再写一份 `8` 会在改尺寸时静默错配（变大 → 最粗级不再是最粗，粗糙反射莫名变锐；变小 → LOD 被 clamp，调参失效）。现在由 `ENV_SIZE → uEnvMaxLod` 单向推导。
+4. **命名对齐语义**：`irradiance` 实际存的是 `E/π`（平均 radiance），改名避免下一个读代码的人再纠结「要不要补 π」。
+
+### 踩坑与修复
+
+1. **注释解释不了数学矛盾**：10-27 先把「补 π」的错误注释改对，本次再把变量名改成 `irradianceOverPi` —— 只改注释不改名字，同样的疑问还会再来一次。
+2. **kD 用 F0 而非 F(NoV)**：DFG 项已把宽 GGX 波瓣的 Fresnel 积分平均掉；若 kD 再乘 `F(NoV)`，粗糙表面掠射会严重欠能（白炉明显变暗）。结论写进 shader 注释。
+
+### 验证
+
+- `npm run typecheck` / `npm run build`：通过。
+- 白炉（2026-11-03 复跑）：**0.978 / -2.20%**，与改动前一致。
+- 观感（非金属中高粗糙度高光、掠射边缘反射）需真实 GPU 目视复核，headless 截图不足以判断。
+
+### 遗留 / 下一步
+
+1. **GGX 重要性采样预滤波**（可选）：当前仍是 CubeCamera 的 box-filter mip + 经验 roughness→LOD 映射，是 split-sum 的最大近似项。
+2. **面间过渡的可视化验收**：可加「漫反射 LOD」调试视图，直接看 cube 面接缝。
+
+---
+
+## 2026-10-27 · p1-light-ssr S2 修复：cluster 数据纹理越界与每帧分配
+
+### 目标
+
+Clustered 剔除改为默认开启（`uClustered = 1`）后暴露两个问题：数据纹理上传越界报 GL 错误、每帧重建纹理产生垃圾。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/clusterCulling.ts` | 改造 | 按纹理行宽分配数据；返回 `gridTexRows` / `indicesTexRows`；缓冲改为模块级复用 |
+| `src/core/postfx/GBufferLightSync.tsx` | 改造 | 上传侧不再反推行数；纹理按行数缓存（仅 `needsUpdate`）；灯光输入池化 |
+
+### 踩坑与修复
+
+1. **`texSubImage2D` 整块上传要求数据长度 == width × height × 4**
+   - 现象：`GL_INVALID_OPERATION: ArrayBufferView not big enough for request`，错误栈落在 `Pipeline.ts` 的 `renderer.render`，极易误判成管线问题。
+   - 根因：只按逻辑长度 `totalClusters * 4` 分配，而纹理宽度固定为 `CLUSTER_TEX_WIDTH`；逻辑长度不是行宽整数倍时，最后一行上传越界。
+   - 修复：分配时补齐到 `rows * CLUSTER_TEX_WIDTH * 4`，尾部 texel 保持 0（只服务上传语义，不被 shader 读取）。
+2. **行数由构建侧给出**：原先上传侧用 `ceil(total / width)` 反推，与构建侧各算一遍，天然容易错位。改为 `buildClusterLights` 返回值携带行数，保证 `data.length === width * height * 4`。
+3. **每帧 `dispose + new DataTexture`**：分辨率与灯数稳定时纹理尺寸不变，只需重传数据。改为按行数缓存纹理槽，行数变化才重建；`counts` / `offsets` / `ranges` / `cursor` 与临时 `Vector3` 全部提到模块级，避免每帧 GC。
+4. **AABB 角点变量覆盖**：投影循环里复用了与外层同名的临时变量，改为独立的 `viewCorner`，消除语义混淆。
+
+### 验证
+
+- `npm run typecheck` / `npm run build`：通过。
+- 2026-11-03 全量复跑：15 passed；clustered 默认路径无 GL error。
+- **未做**：clustered 与暴力前向的像素 A/B、CPU 剔除耗时进性能面板 —— 属 S3 验收。
+
+### 遗留 / 下一步
+
+1. **S3**：`?clustered=` 接线 + 暴力/clustered A/B + 逐像素循环次数与 CPU 剔除耗时入面板。
+2. **剔除精度**：当前是保守范围分配，可升级为 sphere-frustum 精确相交，或整体迁 WebGPU compute。
+
+---
+
+## 2026-10-27 · p1-pbr-ibl 修正：envBRDFApprox 系数恢复能量守恒
+
+### 目标
+
+修掉 split-sum DFG 近似（Karis `EnvBRDFApprox`）里的系数错误：它破坏了 `A + B` 的结构性约束，使完美导体在掠射角损失约 28% 能量。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/shaders/lib/gbuffer_brdf.glsl` | 改造 | `c1.z` 1.0425 → 1.04；`AB` 系数 (-1.73296, 1.35963) → (-1.04, 1.04)；`distributionGGX` 补 roughness 下限 |
+| `src/core/postfx/shaders/lib/gbuffer_ibl.glsl` | 改造 | 修正 irradiance 注释（实现未显式补 π） |
+
+### 关键决策
+
+1. **回归 Karis 2013 原始拟合**：错误系数让 `A + B` 在 roughness=0 时退化为 `1.0025 - 0.373·a004`，而非恒为 1。修正后 `A + B ≡ 1 - 0.55·roughness`（rough=0 精确为 1），F0=1 的完美导体在全角度返回 1.0。
+2. **量化收益**：对 DFG 真值（GGX 重要性采样 + 高度相关 Smith）的平均绝对误差 **0.0317 → 0.0176**。
+3. **接受连带影响**：非金属高光在中高粗糙度暗约 20–25%，金属基本不变；白炉读数需重新标定（复测仍为 0.978 / -2.20%）。
+4. **`distributionGGX` 加 roughness 下限**：`roughness=0` 时 `a2=0` 会让 D 项把高光抹成 0（理想镜面的 delta 退化），用 `max(rough, 1e-3)` 兜住。
+
+### 验证
+
+- `npm run typecheck` / `npm run build`：通过。
+- 白炉（2026-11-03 复跑）：**0.978 / -2.20%**，未因系数修正变差。
+- 观感变化需真实 GPU 目视：非金属高光整体略暗、金属基本不变。
+
+### 遗留 / 下一步
+
+1. **白炉 ±2% 仍略超**：-2.20% 来自单次散射 GGX 的多次散射能量损失，与本次系数无关；要收紧需加多次散射补偿项。
+2. **DFG 可换完整 LUT**：`EnvBRDFApprox` 是解析近似；若要「白炉 ±1%」，可改为预积分 2D LUT（多一张贴图与一次采样）。
 
 ---
 
@@ -44,6 +194,39 @@
 1. **阶段 3 先抽象探针层**：`p3-bake` 落地 SH 探针时，把「probe grid 数据结构 + irradiance 采样接口」设计成对 DDGI 可复用的形态（DDGI 把静态 SH 换成动态 irradiance/visibility 图集）。
 2. **阶段 4 开工前确认 WebGPU 覆盖实测**：`eng-webgpu` 项需在真实设备测 WebGPU 可用性 + 降级标注，DDGI 才能锁定「仅 WebGPU 档位」。
 3. **DDGI 拆解待做**：届时按 docs 既有 S1–S4 模板拆（probe grid 生成 / ray 采样 / 图集更新 / 降噪与 temporal），并接 GPU 计时与调试视图。
+
+---
+
+## 2026-10-25 · p1-shadow 修复：PCF/PCSS 样本钳制到本级 tile、slope bias 解耦
+
+### 目标
+
+修掉多级联下 PCF/PCSS 跨 tile 采样产生的接缝伪影，并把斜率 bias 从常数 bias 中拆出来独立调节。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/shaders/gbuffer.frag` | 改造 | PCF/PCSS 每个偏移样本 clamp 到本级 tile；PCSS 最终比较统一为 `<=` |
+| `src/core/postfx/materials/gbufferShared.ts` | 改造 | 新增 `uShadowSlopeBias` |
+| `src/core/postfx/shadowParams.ts` / `ShadowPanel.tsx` / `HDRDriver.tsx` | 改造 | 新增 `shadowSlopeBias` 旋钮并进 URL |
+| `src/core/postfx/passes/ShadowMapPass.ts` | 改造 | 写入 slope bias uniform |
+
+### 关键决策
+
+1. **样本必须钳制在本级 tile 内**：深度图集把 1–4 级 CSM 拼在同一张贴图的不同 tile，PCF/PCSS 的可变半径采样会越界到相邻 tile，读到别级联的深度，表现为级联边界一条亮/暗接缝。
+2. **slope bias 独立成旋钮**：原三档 bias 共用同一个 bias 值，斜率缩放的实际强度被常数 bias 绑定，无法单独对比「acne / peter-panning」。拆成 `uShadowSlopeBias` 后可分别 A/B。
+3. **PCSS 比较统一为 `<=`**：与 SM/PCF 同一侧判定，避免半影边界出现一像素宽的系统性偏移。
+
+### 验证
+
+- 2026-11-03 全量复跑：15 passed；阴影 A/B **0.83 / 0.55%**，噪声基线 0.00。
+- 3 / 4 级级联边界的接缝仍需真实 GPU 截图目视（headless 下差异集中在投影区，边界不易量化）。
+
+### 遗留 / 下一步
+
+1. **级联间混合**仍未做（当前按 viewDepth 硬切）。
+2. **texel snapping**、**alphaTest 投影**、**VSM** 仍未做。
 
 ---
 

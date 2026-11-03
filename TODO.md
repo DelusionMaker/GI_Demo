@@ -1,7 +1,28 @@
 # 光照与全局光照 · Web 端作品集 任务清单
 
 > 来源：`ref_file/gi-lighting-handbook.html`（理论体系 + 规划 + 技术栈选型）、`ref_file/gi-portfolio-plan.html`（各方向实现细节）
-> 工作量为估算值（已有 WebGL 基础、每天 4–6 小时），单位为工作日。完整主线排期 14–20 周。
+>
+> **排期口径：不设期限，完成即止。** 任务只标状态（未开始 / 进行中 / 完成）与先后顺序，不标工期与截止日；以「该项验收点全部通过」作为唯一完成判据。顺序按依赖与收益排，不按日历排。原「工作日 / 14–20 周」估算已废弃 —— 实测偏差过大，继续挂着期限只会制造错误预期（依据见 DEVLOG 2026-11-03）。
+
+---
+
+## 〇、进度快照（2026-11-03，HEAD `5e57906`）
+
+| 层 | 状态 | 说明 |
+| --- | --- | --- |
+| 阶段 0 · 底座 | 基本完成 | p0-base 骨架 / p0-hdr / p0-gbuffer-hud 完成；p0-assets 2/3（缺 Sponza 室内） |
+| 阶段 1 · 直接光照 | 主体完成 | p1-pbr-ibl 完成；p1-shadow 主体完成（缺级联混合 / VSM / texel snapping）；**p1-light-ssr 仅 S1/S2 骨架** |
+| 阶段 2–5 | 未开始 | GTAO / VFX / 烘焙 / SSGI / DDGI / 收尾 |
+
+站点展示：7 条 demo 中 `done` 2 条（hdr、pbr-ibl）、`wip` 2 条（hello-cube、shadows）、`planned` 3 条（bake-gi、ssgi、deep-gi）；`p1-light-ssr` 尚无独立站点条目。
+
+**三处展示层缺口（优先于新功能）**：
+
+1. **性能故事为空**：`README.md` 性能表整列「待填」。GPU 逐 pass 计时早已接好，但从未在真实 GPU 上采样 —— 这是「三条筛选标准」第 3 条的唯一证据。
+2. **WebGPU 未实测**：阶段 4 锁定 DDGI 且依赖 `three/webgpu`，至今零验证，是整条深水区的单点风险，验证成本却很低。
+3. **多光源 / SSR 不可见**：clustered 已有实现但无 UI、无 A/B，SSR 未开工，站点上没有任何对应页面。
+
+**建议推进顺序（不绑定日期）**：真实 GPU 性能采样 → light-ssr S3（clustered A/B + 剔除耗时归因）→ Sponza 室内 → SSR → 烘焙 / GI 主线 → 阶段 4 开工前先做 WebGPU 冒烟。
 
 ---
 
@@ -26,7 +47,7 @@
 
 - **与手册建议的偏差**：手册 3.5 建议「复杂多 pass 页用 vanilla three」。本项目按用户要求统一走 R3F。缓解方式：渲染核心保持与 React 无关的 module/class，React 只负责挂载与 UI，避免 reconciler 与自建多 pass 管线互相打架。**该缓解方案在 p0-hdr 落地时正式执行，见「三」的方案 A。**
 - **`onBeforeCompile` 脆弱**：依赖 three 内部 chunk 命名，必须锁 three 版本、集中管理注入点、加冒烟测试（手册 3.7）。
-- **构建体积**：当前产物 1.29 MB（gzip 368 kB，含 MobX）。后续用 `manualChunks` 拆出 three，并按需对 demo 做 code-split。
+- **构建体积**：当前产物 **1.38 MB（gzip 397 kB，含 MobX；2026-11-03 构建，665 modules）**。后续用 `manualChunks` 拆出 three，并按需对 demo 做 code-split。
 - **MobX 7 是新主版本**：注解值必须是 `Annotation` 对象（v6 允许的 `"action.bound"` 字符串写法已失效），绑定动作改用 `actionBound`。新增 store 时不要照抄 v6 示例。
 - **性能归因**：不要只看 `renderer.info`（不含 GPU 时间），需接 `EXT_disjoint_timer_query_webgl2` / WebGPU timestamp-query 自己测每个 pass。
 
@@ -42,7 +63,7 @@ npm run build      # 生产构建
 
 ## 二、任务总览（按阶段）
 
-### 阶段 0 · 底座（1–1.5 周）
+### 阶段 0 · 底座
 
 - [~] **p0-base** 搭建渲染框架 + 构建部署 + 可复用 demo 模板 —— **骨架已落地**
   - [x] Vite + TS + React + R3F 工程与构建部署配置（含 `@/*` 别名、DPR 上限、sourcemap）
@@ -50,7 +71,7 @@ npm run build      # 生产构建
   - [x] **CameraRig**：2 个预设视角 + 自动巡航 + 轨道操作 + 键盘（数字键切预设、空格切巡航）
   - [x] **控制面板**组件：Panel（可折叠）/ Slider / Toggle / Select / Button
   - [x] **demoStore**：参数序列化进 URL query，只记录与默认值不同的项（可直接分享复现）
-  - [x] **性能面板**：FPS / 帧时间 / draw call / 三角形 / DPR / 能力位（GPU 时间待接）
+  - [x] **性能面板**：FPS / 帧时间 / draw call / 三角形 / DPR / 能力位 / GPU 逐 pass 耗时（已于 p0-gbuffer-hud 接入）
   - [x] **Hud** 四角插槽 + 全站能力档位徽标（降级路径显式标注）
   - [x] **SceneAsset**：统一场景加载入口（GLTF + Draco）+ 程序化占位回落
   - [x] **站点**：首页卡片（按层级分组、3 标签、关键指标）、DemoPage（八块内容模板）、导航
@@ -66,27 +87,27 @@ npm run build      # 生产构建
   - [x] **资产许可**：`public/assets/CREDITS.md`（Poly Haven CC0 / LittlestTokyo CC BY 4.0 / Draco Apache 2.0）
   - [ ] **室内**：Sponza（Khronos glTF，CC BY 3.0）——baseColor 贴图已接；仍需补 roughness / metalness / normal / emissive 贴图与透明混合，并处理 KTX2 / Draco 压缩
 
-### 阶段 1 · 直接光照（2–3 周）
+### 阶段 1 · 直接光照
 
-- [x] **p1-pbr-ibl** PBR（Cook-Torrance / GGX + Smith + Schlick）+ IBL（split-sum）+ 白炉测试　**核心完成（2026-10-19）**：`gbuffer.frag` 的 `iblDiffuse` / `iblSpecular` 已实现（roughness→LOD + Karis EnvBRDFApprox + 白炉分支）；真实灯光 / CubeCamera 环境贴图 / 白炉开关已接通。2026-10-19 修复了 `tEnvMap` / `uEnvMap` 命名不一致（环境贴图才真正绑定）与漫反射 π 归一化；白炉 HUD 读数实测 **0.978 / -2.2%**，Playwright 已加回归（目标 ±2%，略超，见 DEVLOG）。可选收口：`env` 默认切 `true`、GGX 重要性采样预滤波、±2% 收紧
-- [x] **p1-shadow** 阴影全家桶（SM / PCF / PCSS / CSM / VSM + 三种 bias 补偿）　**主体完成（2026-10-25）**：`ShadowMapPass` 每帧生成 1–4 级 CSM 深度图集（2048² 默认；单级联按投影物包围球收紧），共享 uniform / `ShadowPanel` / 深度图集与 cascade 调试视图 / e2e 已就位。**`gbuffer.frag` 的 `shadowFactor()` 已自写完成**：SM 深度比较、PCF 5×5、PCSS（blocker search + 半影估计）三档，三种 bias（常数 / 法线 / 斜率）可 A/B，级联按 viewDepth 选择；`e2e/shadow.spec.ts` 的 A/B 用例已启用并通过（切阴影产生可见差异）。**未做**：VSM（需额外 moment RT + blur pass）、级联间混合、CSM texel snapping、alpha-tested 投影。
-- [ ] **p1-light-ssr** 多光源与剔除（**Clustered 优先**：Forward + Clustered 两档，Deferred 已排除）+ SSR（屏幕空间反射）　**拆解见第七章**
+- [x] **p1-pbr-ibl** PBR（Cook-Torrance / GGX + Smith + Schlick）+ IBL（split-sum）+ 白炉测试　**核心完成（2026-10-19）**：`gbuffer.frag` 的 `iblDiffuse` / `iblSpecular` 已实现（roughness→LOD + Karis EnvBRDFApprox + 白炉分支）；真实灯光 / CubeCamera 环境贴图 / 白炉开关已接通。2026-10-19 修复了 `tEnvMap` / `uEnvMap` 命名不一致（环境贴图才真正绑定）与漫反射 π 归一化；白炉 HUD 读数实测 **0.978 / -2.2%**，Playwright 已加回归（目标 ±2%，略超，见 DEVLOG）。**2026-10-27 / 10-29 又做了三项算法收口**：`envBRDFApprox` 系数回归 Karis 2013（恢复 `A+B` 结构性约束，DFG 平均绝对误差 0.0317→0.0176）、漫反射改分数 LOD（消除 cube 面块状过渡）、镜面按 `roughness²` 向 N 收拢（压掉掠射错位反射）+ `ENV_SIZE`/`uEnvMaxLod` 单一来源。可选收口：`env` 默认切 `true`、GGX 重要性采样预滤波、±2% 收紧
+- [x] **p1-shadow** 阴影全家桶（SM / PCF / PCSS / CSM + 三种 bias 补偿；VSM 未做）　**主体完成（2026-10-25）**：`ShadowMapPass` 每帧生成 1–4 级 CSM 深度图集（2048² 默认；单级联按投影物包围球收紧），共享 uniform / `ShadowPanel` / 深度图集与 cascade 调试视图 / e2e 已就位。**`gbuffer.frag` 的 `shadowFactor()` 已自写完成**：SM 深度比较、PCF 5×5、PCSS（blocker search + 半影估计）三档，三种 bias（常数 / 法线 / 斜率）可 A/B，级联按 viewDepth 选择；`e2e/shadow.spec.ts` 的 A/B 用例已启用并通过（切阴影产生可见差异）。**未做**：VSM（需额外 moment RT + blur pass）、级联间混合、CSM texel snapping、alpha-tested 投影。
+- [~] **p1-light-ssr** 多光源与剔除（**Clustered 优先**：Forward + Clustered 两档，Deferred 已排除）+ SSR（屏幕空间反射）　**S1/S2 骨架已落地（2026-10-26，10-27 修复上传越界与每帧分配），S3/S4 未开工**：`uClustered` 代码默认已是 1，但**无 UI / URL 开关、场景里没有点光/聚光、无暴力 vs clustered A/B、无 CPU 剔除耗时归因**；SSR 完全未开始。拆解见第七章
 
-### 阶段 2 · 观感增量（2–3 周）
+### 阶段 2 · 观感增量
 
 - [ ] **p2-gtao** GTAO / HBAO（水平角积分 + 多次弹射近似）
 - [ ] **p2-vfx** SSS 次表面散射 / 体积光雾 / 折射色散玻璃
 
-### 阶段 3 · GI 主线（3–4 周） ⚠️ 烘焙先做，保证兜底
+### 阶段 3 · GI 主线 ⚠️ 烘焙先做，保证兜底
 
 - [ ] **p3-bake** 烘焙 lightmap + SH 探针（先做兜底）+ 烘焙器 Node CLI
 - [ ] **p3-ssgi** SSGI + 降噪器（SVGF / à-trous）
 
-### 阶段 4 · 深水区（4–6 周） ⚠️ 四选一，只做深一条
+### 阶段 4 · 深水区 ⚠️ 四选一，只做深一条
 
 - [ ] **p4-deep** 深水方向已锁定 **DDGI**（动态漫反射全局光照）；其余 VXGI / SDF GI / 实时 PT 已排除。需 WebGPU，届时在 `createRenderer.ts` 单点切后端（2026-10-26 确认）
 
-### 阶段 5 · 收尾（2 周）
+### 阶段 5 · 收尾
 
 - [ ] **p5-final** 移动端适配 + 多级降级路径 + 视觉 / 性能回归
 
@@ -116,7 +137,7 @@ npm run build      # 生产构建
 1. 它是文档推荐主线的第 1 环（HDR/色调映射底座 → PBR+IBL → 阴影 → 烘焙 → SSGI → 深水区）。
 2. 它是唯一一个**能强制把 pass 框架带出来**的任务。后面所有东西（G-buffer、Clustered、SSGI、降噪、VXGI）都要挂在这条链上；现在建对，比阶段 3 重构便宜百倍。
 3. **可独立验证**（命中筛选标准第 1 条）：曲线可画出来对照、过曝回收可用 EV 阶梯验证、直方图可回读。
-4. 工作量小（2–3 天），架构收益最大。
+4. 工作量小，架构收益最大。
 
 **前置依赖已就绪**：能力探测、`PostFX` 插槽、`perfStore` 5Hz 采样都已具备。**本轮不需要改动 store 层**（除给 HDR 参数加一个 `createDemoStore`）。
 
@@ -296,22 +317,23 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 
 ---
 
-### 3.5 验收清单
+### 3.5 验收清单（2026-11-03 复核，全部有回归用例守护）
 
-- [ ] `PostFX` 不再是直通，`CanvasRoot` 实际挂载了 `Pipeline`
-- [ ] 场景渲进 RGBA16F 目标；`colorBufferFloat` 为 false 时回落 RGBA8，且 HUD 显式标注当前档位
-- [ ] `renderer.toneMapping` 仍是 `NoToneMapping`，映射只在 pass 里发生**一次**（不得重复映射）
-- [ ] ACES / AgX / Reinhard 可切换，切换后画面变化与曲线形状一致
-- [ ] EV 滑杆生效，范围至少 −4 … +4
-- [ ] 「过曝回收」对比可演示：EV 阶梯下高光不截断
-- [ ] 直方图面板随 EV 平移（关闭自动曝光时）
-- [ ] 自动曝光可开关，1–2 帧收敛，无可见振荡
-- [ ] Bloom 可开关，mip 链各级可可视化，并给出耗时占比
-- [ ] `Pipeline` / passes 目录下**没有任何 React import**
-- [ ] 所有参数进 URL（`?ev=&tm=&autoexposure=&clipView=&bloom=&bloomIntensity=`），链接可直接复现
-- [ ] 性能面板仍是 5Hz 采样 —— 加了 pass 之后**不允许**退化成每帧重渲染
-- [ ] `npm run typecheck` 与 `npm run build` 通过
-- [ ] demo 元数据 status 改 `done`，limitations 如实填写
+- [x] `PostFX` 不再是直通，`CanvasRoot` 实际挂载了 `Pipeline`
+- [x] 场景渲进 RGBA16F 目标；`colorBufferFloat` 为 false 时回落 RGBA8，且 HUD 显式标注当前档位
+- [x] `renderer.toneMapping` 仍是 `NoToneMapping`，映射只在 pass 里发生**一次**（不得重复映射）
+- [x] ACES / AgX / Reinhard 可切换，切换后画面变化与曲线形状一致
+- [x] EV 滑杆生效，范围至少 −4 … +4
+- [x] 「过曝回收」对比可演示：EV 阶梯下高光不截断
+- [x] 直方图面板随 EV 平移（关闭自动曝光时）
+- [x] 自动曝光可开关，1–2 帧收敛，无可见振荡
+- [x] Bloom 可开关，开启后高光柔化；GPU 耗时已在性能面板逐 pass 可见
+- [ ] bloom mip 链各级缩略图（原验收项的后半句）：目前只能证明整条链生效，没做逐级可视化
+- [x] `Pipeline` / passes / shaders 目录下**没有任何 React import**（`postfx` 下的 `HDRDriver` / 面板 / 画图组件属 UI 层，允许用 React）
+- [x] 所有参数进 URL（`?ev=&tm=&autoexposure=&clipView=&bloom=&bloomIntensity=`），链接可直接复现
+- [x] 性能面板仍是 5Hz 采样 —— 加了 pass 之后**不允许**退化成每帧重渲染
+- [x] `npm run typecheck` 与 `npm run build` 通过
+- [x] demo 元数据 status 改 `done`，limitations 如实填写
 
 ---
 
@@ -326,7 +348,7 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 
 ---
 
-### 3.7 配套建议（与本轮并行，半天）
+### 3.7 配套建议（与本轮并行）
 
 本会话已两次暴露同一个洞：MobX 迁移与 R3F `gl` 工厂签名都**只能验证到类型与构建层面，无法确认浏览器里真能跑**（环境无 Playwright，未擅自安装浏览器内核）。而 pass 重构恰恰是最容易「改完白屏」的改动。
 
@@ -507,8 +529,8 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 
 | 步骤 | 内容 | 验收点 | 状态 |
 | --- | --- | --- | --- |
-| **S1** | 多光源模型 + `GBufferLightSync` 扩展（收集全部灯：主平行光保留 + 点光/聚光，含位置/方向/角度/衰减）；`gbuffer.frag` 暴力遍历全部灯；调试视图（当前灯数 HUD / 光源列表） | 多盏点光在 Cornell/户外产生正确照明；无额外灯时画面与单主光一致（回归）；HUD 显示当前灯数 | 🟡 框架已落地（2026-10-26） |
-| **S2** | cluster grid 构建（**CPU**）：屏幕 tile × 深度切片（对数切分）；光源 → cluster 相交分配；上传 `uClusterLightGrid` / `uClusterLightIndices` 两张数据纹理；`ClusterDebugPass`（tile 叠加 + 每 cluster 灯数热力） | cluster 网格调试视图可见；每 cluster 灯数与手动统计一致；光源移动时分配实时更新 | 🟡 框架已落地（2026-10-26） |
+| **S1** | 多光源模型 + `GBufferLightSync` 扩展（收集全部灯：主平行光保留 + 点光/聚光，含位置/方向/角度/衰减）；`gbuffer.frag` 暴力遍历全部灯；调试视图（当前灯数 HUD / 光源列表） | 多盏点光在 Cornell/户外产生正确照明；无额外灯时画面与单主光一致（回归）；HUD 显示当前灯数 | 🟡 骨架（2026-10-26）：循环与 uniform 就位，**但场景里没有点光/聚光，灯数 HUD 未做** |
+| **S2** | cluster grid 构建（**CPU**）：屏幕 tile × 深度切片（对数切分）；光源 → cluster 相交分配；上传 `uClusterLightGrid` / `uClusterLightIndices` 两张数据纹理；`ClusterDebugPass`（tile 叠加 + 每 cluster 灯数热力） | cluster 网格调试视图可见；每 cluster 灯数与手动统计一致；光源移动时分配实时更新 | 🟡 骨架 + 上传修复（2026-10-26 / 10-27）：`uClustered` 代码默认 1；**缺 UI/URL 开关与 A/B，调试视图为 in-shader 而非独立 pass** |
 | **S3** | Clustered 前向着色：`gbuffer.frag` 按 `fragCoord + viewDepth` 取 cluster → 取灯列表 → 循环；与 S1 暴力前向做 **A/B**（同场景同灯数亮度应一致，但逐像素循环次数下降）；perf 面板加「clustered vs brute」对照；GPU 计时出现剔除一行 | A/B 画面差异在噪声级；灯数高时 clustered 帧时间/耗时占比优于暴力；性能面板逐 pass 归因 | ⬜ |
 | **S4** | **SSR**（屏幕空间反射）：复用 gNormal/gAlbedo/DepthTexture 做 ray march；反射贡献混入高光/环境；SSR 开关 + 步进/最大距离/粗糙度衰减旋钮；`SSRDebugPass`（命中掩码 / 反射贡献） | 户外金属球出现环境反射；关闭时画面与接入前一致（零回归）；SSR 在性能面板逐 pass 归因 | ⬜ |
 | **S5** | 收尾：`src/site/demos.ts` 的 `light-ssr` 条目 `status → wip`；如实补 limitations（Forward-Clustered 非 Deferred、cluster 上限、SSR 屏幕空间穿帮/出屏缺失） | 站点该 demo 不再显示「规划中」；limitations 诚实 | ⬜ |
@@ -573,7 +595,8 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 #### 7.3.2.1 S2 已落地（2026-10-26）—— 框架骨架，作品集段留 TODO
 
 - **实现文件**：`clusterCulling.ts`（CPU 保守范围分配 helper）、`GBufferLightSync.tsx`（每帧条件触发构建 + 上传两张 RGBA32F 数据纹理）、`lib/gbuffer_lights.glsl`（cluster-fetch 辅助 `getClusterIndex` / `clusterTexCoord` + 逐灯 `lightContribution`）、`gbuffer.frag`（uClustered 分支：暴力 / Clustered cluster-fetch 走同一 `lightContribution`）、`lib/gbuffer_debug.glsl`（cluster tile 叠加 + 灯数热力调试视图）。
-- **默认 uClustered = 0**：S1 暴力路径仍生效，现有 demo 零回归；把 `gbufferShared.uClustered.value` 置 1 即启用 Clustered 前向（S3 会把它接成 UI 旋钮 / URL 参数做 A/B，默认 1）。
+- **`uClustered` 已于 2026-10-27 后改为默认 1**（原为 0，先保证 S1 暴力路径零回归）：clustered 前向成为默认路径，暴力路径仅在手动改常量时生效。**但目前没有任何 UI / URL 开关，也没有 A/B 入口** —— S3 要把这个开关接出去，否则无法演示「clustered vs brute」的差异。
+- **2026-10-27 修复（S2 落地后暴露）**：数据纹理按逻辑长度分配导致 `texSubImage2D` 越界（`ArrayBufferView not big enough`，错误栈误指向 `Pipeline.render`）；改为按行宽整数倍分配，行数由 `buildClusterLights` 返回，并复用缓冲 / 纹理、池化灯光输入，消除每帧分配。详见 DEVLOG 2026-10-27。
 - **调试视图改为 in-shader**（与 cascade 一致，不走独立 `ClusterDebugPass`）：HDR 面板「调试视图」新增 `cluster:tiles` / `cluster:heat`，由 `uClusterDebug` 驱动；选任一即触发 cluster 构建，无需切 pass。
 - **留给作品集的 TODO（已在代码标注）**：
   1. `clusterCulling.ts` 的「保守范围分配」改为更精确的 **sphere-frustum 相交**，或整段迁 **WebGPU compute**（阶段 4 后端切分点）；
