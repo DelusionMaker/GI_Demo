@@ -10,6 +10,56 @@
 
 ---
 
+## 2026-11-03 · p1-light-ssr S3-c/S3-d：截断告警 + 剔除归因（含首轮阶梯数据）
+
+### 目标
+
+补齐两件让「多光源」可信的东西：灯数超限时**不再静默**（S3-c），剔除的成本与收益**可量化**（S3-d）；同时修掉性能面板里恒为「—」的 GPU 时间（实际逐 pass 数据早已可用）。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/clusterStats.ts` | 新增 | 非响应式帧内统计单例（`cullCpuMs` / `avgLightsPerCluster` / 截断数 …） |
+| `src/core/postfx/clusterStore.ts` | 新增 | 200ms 采样成 observable（与 `perfStore` 同款） |
+| `src/core/postfx/clusterCulling.ts` | 改造 | `ClusterBuildResult` 增加 `litClusters` / `avgLightsPerCluster` / `truncatedClusters`（复用已有循环，零额外遍历） |
+| `src/core/postfx/GBufferLightSync.tsx` | 改造 | 打点测剔除耗时；每帧把统计写进单例（含未启用分支） |
+| `src/core/perf/PerfPanel.tsx` | 改造 | 新增「Clustered 剔除」归因行；GPU 时间改为逐 pass 汇总；移除死字段 |
+| `src/core/perf/perfStats.ts` / `perfStore.ts` | 改造 | 删除从未被赋值的 `gpuMs` |
+| `e2e/clustered.spec.ts` | 改造 | 新增归因面板断言（灯数、平均每 cluster 严格小于总灯数、剔除 CPU 有读数） |
+
+### 关键决策
+
+1. **统计走「非响应式单例 + 5Hz 采样」，不在 `useFrame` 里写 observable**：每帧写会引发每帧重渲染，这条在本项目已经踩过（TODO「每帧数据」一行）。
+2. **三个指标一并报，不只报 ms**：`平均每 cluster 灯数` 是结构性指标（单调、可换算「省了多少次 BRDF」），`cullCpuMs` 是成本侧，二者相减才是真实的性能故事。
+3. **截断必须可见**：`GBufferLightSync` 在 `count >= MAX_LIGHTS` 时直接 `return`，多出来的灯静默失效。现在面板同时报「请求 N 盏 / 生效 M 盏」与「被截断的 cluster 数」——后者会真的漏光（局部变暗），不能只报灯数。
+4. **`perfStats.gpuMs` 直接删掉而不是「以后填」**：逐 pass GPU 耗时早已在用，顶部那一格永远显示「—」只会让人以为计时没接。改为 `passTimes` 汇总，没有一条可用时才显示「—」。
+
+### 踩坑与修复
+
+1. **`.perf-passes` 被用了两次，冒烟用例按选择器断言时命中两个元素**（strict mode violation）。归因为「给归因块另起了一个同 class 的容器」；修复是把归因行并进原有的 `perf-passes` 容器内。教训：既有 e2e 用 class 选择器做断言时，新增 UI **不要复用同一个布局 class**。
+2. **`cullCpuMs` 的口径容易说过头**：它只覆盖「CPU 重建 cluster 列表 + 标记纹理重传」，不含 GPU 侧真正的 `texSubImage2D`（发生在绘制提交时）。面板与文档都按这个口径写，避免把两项成本混为一谈。
+
+### 验证
+
+- `npm run typecheck` / `npm run build`：通过。
+- `npx playwright test`：**21 passed**（新增归因断言 1 条；既有 HDR / G-Buffer / 阴影 / 户外 / 演示模式均无回归）。
+- 归因面板实测（`?clustered=1&lightCount=N`，headless SwiftShader，**仅看趋势**）：
+
+| 点光数 | 合计灯数 | 平均每 cluster | 循环节省 | 剔除 CPU |
+| --- | --- | --- | --- | --- |
+| 8 | 12 | 3.26 盏 | 72.7% | 2.40 ms |
+| 32 | 36 | 5.30 盏 | 85.3% | 6.00 ms |
+| 56 | 60 | 7.45 盏 | 87.6% | 5.90 ms |
+
+### 遗留 / 下一步
+
+1. **真实 GPU 数据**：上表是 SwiftShader（软件渲染），只能看趋势，**不能进 README 性能表**。需要在真机上采同一组阶梯 + `beauty` pass 的 GPU ms。
+2. **CPU 剔除可能反超收益**：60 盏灯时每帧要 2–6 ms 做 JS 剔除，而省下的是 GPU 逐片元循环。快显卡上这笔账不一定划算 —— 这正是阶段 4 迁 compute 的论据，要如实写进 limitations。
+3. **S3-b 灯位 / 强度手调**、**S3-f 站点条目**仍未做。
+
+---
+
 ## 2026-11-03 · p1-light-ssr S3-a：接线骨架落地 + 剔除的两个致命 bug
 
 ### 目标

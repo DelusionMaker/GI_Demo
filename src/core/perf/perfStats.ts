@@ -5,12 +5,6 @@ export interface PerfSnapshot {
   drawCalls: number
   triangles: number
   dpr: number
-  /**
-   * GPU 时间。
-   * TODO(p0-gbuffer-hud): 用 EXT_disjoint_timer_query_webgl2（WebGPU 用 timestamp-query）
-   * 按 pass 实测后填充 —— renderer.info 不提供 GPU 时间，不能用于性能归因。
-   */
-  gpuMs: number | null
 }
 
 /**
@@ -24,7 +18,6 @@ export const perfStats: PerfSnapshot = {
   drawCalls: 0,
   triangles: 0,
   dpr: 1,
-  gpuMs: null,
 }
 
 /** 最近 120 帧的帧时间环形缓冲，供后续画帧时间曲线 */

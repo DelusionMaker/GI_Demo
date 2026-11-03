@@ -1,6 +1,7 @@
 import { observer } from 'mobx-react-lite'
 import { useEffect } from 'react'
 import { capabilitiesStore } from '../capabilities'
+import { clusterStore } from '../postfx/clusterStore'
 import { hdrStore } from '../postfx/hdrStore'
 import { perfStore } from './perfStore'
 
@@ -15,11 +16,28 @@ import { perfStore } from './perfStore'
 export const PerfPanel = observer(function PerfPanel() {
   useEffect(() => {
     perfStore.startSampling()
-    return () => perfStore.stopSampling()
+    clusterStore.startSampling()
+    return () => {
+      perfStore.stopSampling()
+      clusterStore.stopSampling()
+    }
   }, [])
 
   const caps = capabilitiesStore
   const passTimes = hdrStore.passTimes
+  const cluster = clusterStore
+
+  // 整帧 GPU 时间 = 各启用 pass 的实测之和（没有一条可用时显示「—」）
+  const gpuSamples = passTimes.filter((pass) => pass.gpuMs !== null)
+  const gpuTotalMs =
+    gpuSamples.length > 0 ? gpuSamples.reduce((sum, pass) => sum + (pass.gpuMs ?? 0), 0) : null
+
+  // 压缩比：clustered 平均每 cluster 灯数 / 实际灯数，越小说明剔除越有效
+  const savedRatio =
+    cluster.enabled && cluster.activeLights > 0
+      ? 1 - cluster.avgLightsPerCluster / cluster.activeLights
+      : null
+  const lightTruncated = cluster.activeLights < cluster.requestedLights
 
   return (
     <div className="panel perf-panel">
@@ -35,8 +53,12 @@ export const PerfPanel = observer(function PerfPanel() {
         <Metric label="DPR" value={`×${perfStore.dpr.toFixed(2)}`} />
         <Metric
           label="GPU 时间"
-          value={perfStore.gpuMs === null ? '—' : `${perfStore.gpuMs.toFixed(2)} ms`}
-          hint={perfStore.gpuMs === null ? '待接计时扩展' : undefined}
+          value={gpuTotalMs === null ? '—' : `${gpuTotalMs.toFixed(2)} ms`}
+          hint={
+            gpuTotalMs === null
+              ? '设备不支持 EXT_disjoint_timer_query_webgl2'
+              : '各启用 pass 的 GPU 实测之和'
+          }
         />
       </div>
 
@@ -60,6 +82,50 @@ export const PerfPanel = observer(function PerfPanel() {
           ) : (
             <div className="perf-pass-note">CPU 侧提交耗时 · GPU 计时不可用（设备不支持 EXT_disjoint_timer_query_webgl2）</div>
           )}
+
+          {/* p1-light-ssr S3-d：多光源 / 剔除的归因。5Hz 采样，不随帧重渲染 */}
+          <div className="panel-note perf-cluster">
+            Clustered 剔除 ·{' '}
+            {cluster.enabled ? '已启用' : cluster.requestedLights > 0 ? '已关闭（暴力前向）' : '无额外光源'}
+          </div>
+          <div className="perf-pass-row">
+            <span className="perf-key">光源</span>
+            <span className="perf-val-sm">
+              {cluster.activeLights} / {cluster.requestedLights} 盏
+            </span>
+          </div>
+          {cluster.enabled ? (
+            <>
+              <div className="perf-pass-row">
+                <span className="perf-key">平均每 cluster</span>
+                <span className="perf-val-sm">{cluster.avgLightsPerCluster.toFixed(2)} 盏</span>
+              </div>
+              <div className="perf-pass-row">
+                <span className="perf-key">循环节省</span>
+                <span className="perf-val-sm">
+                  {savedRatio === null ? '—' : `${(savedRatio * 100).toFixed(1)}%`}
+                </span>
+              </div>
+              <div className="perf-pass-row">
+                <span className="perf-key">剔除 CPU</span>
+                <span className="perf-val-sm">{cluster.cullCpuMs.toFixed(2)} ms</span>
+              </div>
+              <div className="perf-pass-row">
+                <span className="perf-key">有灯 cluster</span>
+                <span className="perf-val-sm">
+                  {formatCount(cluster.litClusters)} / {formatCount(cluster.totalClusters)}
+                </span>
+              </div>
+            </>
+          ) : null}
+          {lightTruncated || cluster.truncatedClusters > 0 ? (
+            <div className="perf-pass-note">
+              灯数已达上限：请求 {cluster.requestedLights} 盏，只生效 {cluster.activeLights} 盏
+              {cluster.truncatedClusters > 0
+                ? `；${cluster.truncatedClusters} 个 cluster 被截断（会漏光）`
+                : ''}
+            </div>
+          ) : null}
         </div>
       ) : null}
 

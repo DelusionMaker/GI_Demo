@@ -19,7 +19,6 @@ export class PerfStore {
   drawCalls = 0
   triangles = 0
   dpr = 1
-  gpuMs: number | null = null
 
   private timer: ReturnType<typeof setInterval> | null = null
 
@@ -30,7 +29,6 @@ export class PerfStore {
       drawCalls: observable,
       triangles: observable,
       dpr: observable,
-      gpuMs: observable,
       sample: actionBound,
     })
   }
@@ -52,7 +50,6 @@ export class PerfStore {
     this.drawCalls = perfStats.drawCalls
     this.triangles = perfStats.triangles
     this.dpr = perfStats.dpr
-    this.gpuMs = perfStats.gpuMs
   }
 }
 

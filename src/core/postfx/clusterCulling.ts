@@ -29,6 +29,12 @@ export interface ClusterBuildResult {
   /** 两张数据纹理的高度（行数），配合 CLUSTER_TEX_WIDTH 构造 DataTexture */
   gridTexRows: number
   indicesTexRows: number
+  /** 有灯的 cluster 数（count > 0） */
+  litClusters: number
+  /** 平均每 cluster 灯数 = totalIndices / totalClusters；与总灯数相比即压缩比 */
+  avgLightsPerCluster: number
+  /** 单 cluster 灯数被 MAX_LIGHTS 截断的 cluster 数（> 0 表示这些 cluster 会漏光） */
+  truncatedClusters: number
 }
 
 /**
@@ -188,13 +194,20 @@ export function buildClusterLights(opts: {
   }
 
   // 每 cluster 灯数上限（避免单 cluster 爆炸；同时是 shader 循环上限）
+  // 统计截断次数：被截断的 cluster 会漏掉灯（局部变暗），必须让面板能报出来
+  let truncatedClusters = 0
   for (let i = 0; i < totalClusters; i++) {
-    if (counts[i] > MAX_LIGHTS) counts[i] = MAX_LIGHTS
+    if (counts[i] > MAX_LIGHTS) {
+      counts[i] = MAX_LIGHTS
+      truncatedClusters++
+    }
   }
 
-  // 前缀和 → offset
+  // 前缀和 → offset；顺便统计有灯的 cluster 数（性能故事的分子）
   let acc = 0
+  let litClusters = 0
   for (let i = 0; i < totalClusters; i++) {
+    if (counts[i] > 0) litClusters++
     offsets[i] = acc
     acc += counts[i]
   }
@@ -245,5 +258,8 @@ export function buildClusterLights(opts: {
     totalClusters,
     gridTexRows,
     indicesTexRows,
+    litClusters,
+    avgLightsPerCluster: totalClusters > 0 ? totalIndices / totalClusters : 0,
+    truncatedClusters,
   }
 }

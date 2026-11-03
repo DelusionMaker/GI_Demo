@@ -1,6 +1,7 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { gbufferShared, MAX_LIGHTS } from './materials/gbufferShared'
+import { recordClusterFrame } from './clusterStats'
 import {
   buildClusterLights,
   CLUSTER_TEX_WIDTH,
@@ -180,6 +181,7 @@ export function GBufferLightSync() {
     // ── S2：Clustered 构建（仅开启时，避免无谓开销）──
     const clustered = gbufferShared.uClustered.value === 1
     const clusterDebug = gbufferShared.uClusterDebug.value !== 0
+    const collectedLights = directionalLights.length + pointLights.length + spotLights.length
     if (clustered || clusterDebug) {
       clusterLights.length = 0
       for (const l of directionalLights) pushClusterLight(l.getWorldPosition(tmpLightPos), 0)
@@ -187,11 +189,37 @@ export function GBufferLightSync() {
       for (const l of spotLights) pushClusterLight(l.getWorldPosition(tmpLightPos), l.distance)
 
       gl.getDrawingBufferSize(bufSize)
+      // 只测 CPU 侧：重建列表 + 标记纹理重传；GPU 的 texSubImage2D 在提交时发生
+      const cullStart = performance.now()
       const result = buildClusterLights({ lights: clusterLights, camera: camera as THREE.PerspectiveCamera, width: bufSize.x, height: bufSize.y })
       uploadClusterTextures(result)
+      const cullCpuMs = performance.now() - cullStart
+
       gbufferShared.uClusterDims.value.set(result.gridW, result.gridH, result.zSlices)
       gbufferShared.uViewNear.value = camera.near
       gbufferShared.uViewFar.value = camera.far
+
+      recordClusterFrame({
+        enabled: clustered,
+        requestedLights: collectedLights,
+        activeLights: count,
+        totalClusters: result.totalClusters,
+        litClusters: result.litClusters,
+        avgLightsPerCluster: result.avgLightsPerCluster,
+        cullCpuMs,
+        truncatedClusters: result.truncatedClusters,
+      })
+    } else {
+      recordClusterFrame({
+        enabled: false,
+        requestedLights: collectedLights,
+        activeLights: count,
+        totalClusters: 0,
+        litClusters: 0,
+        avgLightsPerCluster: 0,
+        cullCpuMs: 0,
+        truncatedClusters: 0,
+      })
     }
   })
 

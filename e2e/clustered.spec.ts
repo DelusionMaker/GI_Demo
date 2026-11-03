@@ -118,6 +118,28 @@ test('灯阵真的参与照明（0 → 8 盏点光画面明显变化）', async 
   )
 })
 
+test('归因面板显示剔除统计（灯数 / 平均每 cluster / 剔除 CPU）', async ({ page }) => {
+  await page.goto('/d/hello-cube?presentation=0&speed=0&scene=cornell&clustered=1&lightCount=8')
+
+  const perf = page.locator('.perf-panel')
+  await expect(perf).toBeVisible({ timeout: 20_000 })
+  await expect(perf).toContainText('Clustered 剔除 · 已启用', { timeout: 10_000 })
+  // 2 平行光 + 8 点光 + 2 聚光，全部应写进 uniform（未达上限）
+  await expect(perf).toContainText('12 / 12 盏')
+
+  // 平均每 cluster 灯数必须严格小于总灯数 —— 这是「剔除真的生效」的结构性证据
+  const avgText = await perf
+    .locator('.perf-pass-row:has-text("平均每 cluster") .perf-val-sm')
+    .innerText()
+  const avg = Number.parseFloat(avgText)
+  expect(Number.isFinite(avg), `解析失败：${avgText}`).toBe(true)
+  expect(avg).toBeGreaterThan(0)
+  expect(avg).toBeLessThan(12)
+
+  // 剔除自身的开销必须可见（这正是性能故事的「另一面」）
+  await expect(perf.locator('.perf-pass-row:has-text("剔除 CPU")')).toContainText('ms')
+})
+
 /**
  * A/B 一致性：同场景、同灯数下，clustered 与暴力前向必须逐像素一致。
  *

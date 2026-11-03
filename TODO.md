@@ -531,7 +531,7 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 | --- | --- | --- | --- |
 | **S1** | 多光源模型 + `GBufferLightSync` 扩展（收集全部灯：主平行光保留 + 点光/聚光，含位置/方向/角度/衰减）；`gbuffer.frag` 暴力遍历全部灯；调试视图（当前灯数 HUD / 光源列表） | 多盏点光在 Cornell/户外产生正确照明；无额外灯时画面与单主光一致（回归）；HUD 显示当前灯数 | 🟡 骨架（2026-10-26）：循环与 uniform 就位，**但场景里没有点光/聚光，灯数 HUD 未做** |
 | **S2** | cluster grid 构建（**CPU**）：屏幕 tile × 深度切片（对数切分）；光源 → cluster 相交分配；上传 `uClusterLightGrid` / `uClusterLightIndices` 两张数据纹理；`ClusterDebugPass`（tile 叠加 + 每 cluster 灯数热力） | cluster 网格调试视图可见；每 cluster 灯数与手动统计一致；光源移动时分配实时更新 | 🟡 骨架 + 上传修复（2026-10-26 / 10-27）：`uClustered` 代码默认 1；**缺 UI/URL 开关与 A/B，调试视图为 in-shader 而非独立 pass** |
-| **S3** | 接线与 A/B（**拆解见 7.3.3**）：程序化灯阵 + `clustered` / `lightCount` 开关与 URL + 剔除归因（平均每 cluster 灯数 / 压缩比 / CPU 剔除 ms）；`gbuffer.frag` 的 clustered 分支已写好，本步只补「可切换、可测、可看」 | 四种灯数下 A/B 画面差异在噪声级；灯数阶梯表（GPU ms + 压缩比）入档；剔除开销显式呈现 | 🟡 **S3-a 骨架已落地（2026-11-03）**：参数 / 面板 / 灯阵 / 接线 / A/B 用例就位，并修掉剔除的两个致命 bug（见 DEVLOG）；S3-c 截断告警、S3-d 归因、S3-f 站点条目待做 |
+| **S3** | 接线与 A/B（**拆解见 7.3.3**）：程序化灯阵 + `clustered` / `lightCount` 开关与 URL + 剔除归因（平均每 cluster 灯数 / 循环节省 / CPU 剔除 ms）；`gbuffer.frag` 的 clustered 分支已写好，本步只补「可切换、可测、可看」 | 四种灯数下 A/B 画面差异在噪声级；灯数阶梯表（GPU ms + 压缩比）入档；剔除开销显式呈现 | 🟡 **S3-a / S3-c / S3-d 完成（2026-11-03）**：A/B 像素级一致（meanAbs 0.000）、归因面板与截断告警就位，并修掉剔除两个致命 bug（见 DEVLOG）；剩 S3-b 灯位手调、S3-e 真实 GPU 数据入 README、S3-f 站点条目 |
 | **S4** | **SSR**（屏幕空间反射）：复用 gNormal/gAlbedo/DepthTexture 做 ray march；反射贡献混入高光/环境；SSR 开关 + 步进/最大距离/粗糙度衰减旋钮；`SSRDebugPass`（命中掩码 / 反射贡献） | 户外金属球出现环境反射；关闭时画面与接入前一致（零回归）；SSR 在性能面板逐 pass 归因 | ⬜ |
 | **S5** | 收尾：`src/site/demos.ts` 的 `light-ssr` 条目 `status → wip`；如实补 limitations（Forward-Clustered 非 Deferred、cluster 上限、SSR 屏幕空间穿帮/出屏缺失） | 站点该 demo 不再显示「规划中」；limitations 诚实 | ⬜ |
 
@@ -672,7 +672,7 @@ export interface ClusterSnapshot {
 | **S3-e** | `e2e/clustered.spec.ts`：同 URL 同灯数下两种模式截图 A/B（复用 `shadow.spec.ts` 的 `diffStats`），加「关灯阵回归」用例 | A/B 线性域 `meanAbs < 1`、`overRatio < 1%`；噪声基线先测再定阈值 |
 | **S3-f**（建议同时做） | 建 `light-ssr` 站点条目（`src/site/demos.ts`）→ `wip`，limitations 按 7.3.3.6 的风险条目如实填写 | 站点上能看到「多光源 + 剔除」，不再是只有 hdr / pbr-ibl 两个 done |
 
-**进度（2026-11-03）**：S3-a 已完成接线骨架（`clusterParams` / `ClusteredPanel` / `ClusterSync` / `LightRig` / `e2e/clustered.spec.ts`），其中**参数默认值与面板文案留给本人定稿**（文件内已标 TODO）。过程中修掉两个会让 clustered 完全失效的剔除 bug，详见 DEVLOG 2026-11-03。S3-b 的灯位 / 强度仍待按场景手调。
+**进度（2026-11-03）**：S3-a（`clusterParams` / `ClusteredPanel` / `ClusterSync` / `LightRig` / `e2e/clustered.spec.ts`）、S3-c（`activeLights` + 截断告警）、S3-d（`clusterStats` / `clusterStore` / 性能面板归因行）已落地。**参数默认值与面板文案仍留给本人定稿**（文件内已标 TODO），S3-b 的灯位 / 强度也待按场景手调。过程中修掉两个会让 clustered 完全失效的剔除 bug，详见 DEVLOG 2026-11-03。
 
 ##### 7.3.3.4 灯数阶梯与要采集的数据
 
@@ -685,16 +685,26 @@ export interface ClusterSnapshot {
 
 采集口径必须写进 README 性能表：**设备型号 / 分辨率 / DPR / 浏览器**，并注明 SwiftShader 数据不可用。
 
+**首轮实测（2026-11-03，headless SwiftShader / 1280×800 / DPR 1，仅看趋势，不可作作品集数据）**：
+
+| 点光数 | 合计灯数 | 平均每 cluster | 循环节省 | 剔除 CPU | 有灯 cluster |
+| --- | --- | --- | --- | --- | --- |
+| 8 | 12 | 3.26 盏 | 72.7% | 2.40 ms | 54.5k / 54.5k |
+| 32 | 36 | 5.30 盏 | 85.3% | 6.00 ms | 54.5k / 54.5k |
+| 56 | 60 | 7.45 盏 | 87.6% | 5.90 ms | 54.5k / 54.5k |
+
+结论（要如实讲的那一面）：**剔除省下的是 GPU 侧的逐片元循环（60 盏 → 平均 7.45 次），代价是每帧 2–6 ms 的 JS 剔除**。在快显卡上 CPU 侧很可能反超收益 —— 这正是阶段 4 迁 compute 的论据，不能只报「节省 87.6%」。
+
 ##### 7.3.3.5 验收清单
 
 - [ ] clustered 与暴力前向在 0 / 8 / 32 / 56 点光下画面差异均在噪声级（**0 / 8 已验证：同一次加载内切换 meanAbs = 0.000、差异像素 0.00%**；32 / 56 未测）
 - [x] 关闭 clustered 后画面与接入前逐字节级一致（`lightCount` 默认 0 → 灯阵不挂载、不建 cluster；e2e 守护）
-- [ ] 面板显示 `activeLights`、`avgLightsPerCluster`、压缩比、`cullCpuMs`、`totalClusters`，且为 5Hz 采样
-- [ ] 灯数被 `MAX_LIGHTS` 截断时面板显式告警（不允许静默丢弃）
+- [x] 面板显示 `activeLights`、`avgLightsPerCluster`、循环节省、`cullCpuMs`、cluster 数，且为 5Hz 采样（2026-11-03）
+- [x] 灯数被 `MAX_LIGHTS` 截断时面板显式告警（同时报「请求 N 盏 / 生效 M 盏」与「被截断的 cluster 数」）
 - [x] `?clustered=` / `?lightCount=` 进 URL，A/B 两条链接可直接分享
-- [ ] 灯数阶梯表（8 / 32 / 56）的 GPU ms + 压缩比进 README 性能表
+- [ ] 灯数阶梯表（8 / 32 / 56）的 **真实 GPU** ms + 压缩比进 README 性能表（当前只有 SwiftShader 参考值）
 - [ ] cluster 调试视图（tile 叠加 / 灯数热力）在满档（合计 60 盏）下仍有意义（热力不应全屏饱和）
-- [x] `npm run typecheck` / `build` / 全量用例通过；新增 A/B 用例（2026-11-03：20 passed）
+- [x] `npm run typecheck` / `build` / 全量用例通过；新增 A/B 与归因断言（2026-11-03）
 - [ ] 站点 `light-ssr` 条目不再是「规划中」，limitations 如实（CPU 剔除、无逐灯阴影、保守分配）
 
 ##### 7.3.3.6 风险与坑
