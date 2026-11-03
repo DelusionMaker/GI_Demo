@@ -531,7 +531,7 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
 | --- | --- | --- | --- |
 | **S1** | 多光源模型 + `GBufferLightSync` 扩展（收集全部灯：主平行光保留 + 点光/聚光，含位置/方向/角度/衰减）；`gbuffer.frag` 暴力遍历全部灯；调试视图（当前灯数 HUD / 光源列表） | 多盏点光在 Cornell/户外产生正确照明；无额外灯时画面与单主光一致（回归）；HUD 显示当前灯数 | 🟡 骨架（2026-10-26）：循环与 uniform 就位，**但场景里没有点光/聚光，灯数 HUD 未做** |
 | **S2** | cluster grid 构建（**CPU**）：屏幕 tile × 深度切片（对数切分）；光源 → cluster 相交分配；上传 `uClusterLightGrid` / `uClusterLightIndices` 两张数据纹理；`ClusterDebugPass`（tile 叠加 + 每 cluster 灯数热力） | cluster 网格调试视图可见；每 cluster 灯数与手动统计一致；光源移动时分配实时更新 | 🟡 骨架 + 上传修复（2026-10-26 / 10-27）：`uClustered` 代码默认 1；**缺 UI/URL 开关与 A/B，调试视图为 in-shader 而非独立 pass** |
-| **S3** | Clustered 前向着色：`gbuffer.frag` 按 `fragCoord + viewDepth` 取 cluster → 取灯列表 → 循环；与 S1 暴力前向做 **A/B**（同场景同灯数亮度应一致，但逐像素循环次数下降）；perf 面板加「clustered vs brute」对照；GPU 计时出现剔除一行 | A/B 画面差异在噪声级；灯数高时 clustered 帧时间/耗时占比优于暴力；性能面板逐 pass 归因 | ⬜ |
+| **S3** | 接线与 A/B（**拆解见 7.3.3**）：程序化灯阵 + `clustered` / `lightCount` 开关与 URL + 剔除归因（平均每 cluster 灯数 / 压缩比 / CPU 剔除 ms）；`gbuffer.frag` 的 clustered 分支已写好，本步只补「可切换、可测、可看」 | 四种灯数下 A/B 画面差异在噪声级；灯数阶梯表（GPU ms + 压缩比）入档；剔除开销显式呈现 | 🟡 **S3-a 骨架已落地（2026-11-03）**：参数 / 面板 / 灯阵 / 接线 / A/B 用例就位，并修掉剔除的两个致命 bug（见 DEVLOG）；S3-c 截断告警、S3-d 归因、S3-f 站点条目待做 |
 | **S4** | **SSR**（屏幕空间反射）：复用 gNormal/gAlbedo/DepthTexture 做 ray march；反射贡献混入高光/环境；SSR 开关 + 步进/最大距离/粗糙度衰减旋钮；`SSRDebugPass`（命中掩码 / 反射贡献） | 户外金属球出现环境反射；关闭时画面与接入前一致（零回归）；SSR 在性能面板逐 pass 归因 | ⬜ |
 | **S5** | 收尾：`src/site/demos.ts` 的 `light-ssr` 条目 `status → wip`；如实补 limitations（Forward-Clustered 非 Deferred、cluster 上限、SSR 屏幕空间穿帮/出屏缺失） | 站点该 demo 不再显示「规划中」；limitations 诚实 | ⬜ |
 
@@ -603,11 +603,118 @@ scene ──► ① scene      HDR RT (RGBA16F, scale 1.0)   ← 不做任何色
   2. `gbuffer_lights.glsl` 的 **多灯能量守恒 / 逐灯 specular 重要性采样**（当前朴素逐灯叠加）；点光/聚光 **物理衰减** 已在此标注 TODO；
   3. S3 的 **A/B 验收**（同场景同灯数，clustered 与暴力亮度一致、逐像素循环次数下降）与 **CPU 剔除耗时进性能面板**。
 
-#### 7.3.3 S3 设计要点（动手前）
+#### 7.3.3 S3 拆解（Clustered A/B：接线、灯阵、归因）
 
-- **cluster 索引计算**：片元里 `tile = ivec2(gl_FragCoord.xy / 16)`；`depthSlice` 由 `viewZ`（线性深度）经对数反算；`clusterIdx` 拼装后 `texelFetch` 取 `(offset, count)`。
-- **A/B 对照**：同一场景同灯数，分别跑暴力前向（S1）与 clustered（S3），像素差应在噪声级（证明 cluster 分配无漏光/误剔除）；perf 同时采两种的逐 pass GPU ms + 平均循环次数，给出「灯数阶梯 8/32/64」对照表。
-- **剔除耗时进面板**：S2 的 CPU 分配耗时作为一行，讲清「为什么用 clustered 而不是每像素遍历全部灯」时要同时给出剔除自身开销（性能故事的「另一面」）。
+> S3 的产出**不是「更快的渲染」**，而是作品集第 3 条筛选标准的证据：同场景同灯数下，clustered 与暴力前向**画面一致**，但逐片元循环次数与 GPU 时间下降，且**剔除自身的开销也被量化**。没有这组对照，S1/S2 的代码在评审眼里只是「写了但没用」。
+
+##### 7.3.3.0 现状与缺口
+
+| 已就位（不用重做） | 缺口（S3 要补的） |
+| --- | --- |
+| `gbuffer.frag` 两条路径共用 `lightContribution()`，仅循环来源不同 | **没有任何 UI / URL 开关**（`uClustered` 是代码常量 1） |
+| `clusterCulling.ts` 每帧构建 + 数据纹理上传（10-27 已修复越界与分配） | **场景里没有点光 / 聚光**，只有 1 主平行光 + 1 补光，A/B 退化成 1 盏灯 |
+| `hdrDebug` 里的 `cluster:tiles` / `cluster:heat` 调试视图 | **没有成本归因**：剔除 CPU 耗时、逐片元循环次数都不可见 |
+| 性能面板已有逐 pass CPU / GPU 耗时（`beauty` 行即多光源着色开销） | **没有 A/B 用例**：无法证明「闭着眼睛也能看出没漏光」 |
+
+##### 7.3.3.1 架构决策
+
+1. **参数归属：新建 `clusterParams.ts` + `ClusteredPanel.tsx`**（与 `shadowParams` / `ShadowPanel` 同构），不塞进 `hdrParams`，也不塞进 demo 的 `DemoParams`。
+   - 塞 demo：HDR / pbr-ibl 页面拿不到，「多光源」变成某个 demo 的私有特性；
+   - 塞 `hdrParams`：后处理链与光照系统的边界会被打穿（`hdrParams` 现在的语义是「映射 / 曝光 / bloom」）。
+   - 参数名加前缀避免冲突：`clustered` / `lightCount` / `lightSpin`（现有 demo 参数里已有 `speed / scene / debug / env / furnace`）。
+2. **灯阵程序化生成，不接新资产**：新增 `LightRig.tsx`，按 `lightCount` 摆 N 盏点光 + 2 盏聚光，环形 / 网格分布在中远景。
+   - **每盏灯必须带 `distance`（即 `range > 0`）**：`range = 0` 在 `clusterCulling.ts` 里等价于平行光「覆盖全部 cluster」，clustered 立刻退化成暴力前向，A/B 毫无意义。这是本步最容易踩空的一点。
+3. **灯数上限按 64 算，阶梯取 8 / 32 / 56（点光数）**：`MAX_LIGHTS = 64` 是**所有灯合计**。光照预算里固定占 4 盏（场景主平行光 1 + 补光 1 + 灯阵的 2 盏聚光），故点光上限取 56（合计 60），留 4 槽余量 —— 否则后续再加任何一盏灯都会被静默丢弃，而 `GBufferLightSync` 在 `count >= MAX_LIGHTS` 时直接 `return`，属于极难排查的一类 bug。
+   - 不做 128：`uLightData0..3` 是 4 个 `vec4[64]`，扩到 128 会挤占 fragment uniform 预算（移动端常见上限 224–256 个 vec4），且 56 盏已足够压出差异。
+4. **度量分两层，不能只报 ms**：
+   - 画面一致性：clustered vs brute 的像素差（线性域），必须落到噪声级；
+   - 成本：`beauty` pass 的 GPU ms + 剔除 CPU ms + **每 cluster 平均灯数 / 压缩比**。
+   - 之所以要「平均灯数」：GPU ms 在桌面机上受噪声与 VSync 影响，容易得出「差不多」的结论；循环次数是结构性指标，单调性稳定，且能直接换算「省了多少次 BRDF」。
+   - 口径写明：按 cluster 统计（每 cluster 覆盖约 16×16 像素，深度切片内像素分布不均），**不是严格逐像素**；严格版需要在 GPU 上做直方图，属后续可选。
+5. **统计数据沿用 perfStats 的模式**：渲染路径写**非响应式单例**，DOM 侧按 5Hz 采样成 observable。禁止每帧写 MobX（既有约束，`hdrStore` 的注释里已写明）。
+
+##### 7.3.3.2 数据结构与接口（目标形态）
+
+```ts
+// src/core/postfx/clusterParams.ts —— 与 shadowParams 同构，自动进 URL
+export type ClusterParams = {
+  clustered: boolean      // false = 暴力前向（A/B 的对照组）
+  lightCount: number      // 点光数量：0 / 8 / 32 / 56（0 = 只剩场景原有 4 盏灯，用于回归）
+  lightSpin: boolean      // 灯阵绕场景旋转：证明 per-frame 重建真实生效，也方便录 GIF
+}
+// ?clustered=0&lightCount=32 打开即可复现 A/B 的另一半
+```
+
+```ts
+// src/core/postfx/clusterStats.ts —— 非响应式单例，GBufferLightSync 每帧写
+export interface ClusterSnapshot {
+  cullCpuMs: number          // buildClusterLights + 上传的 CPU 耗时
+  activeLights: number       // 实际送进 uniform 的灯数（含平行光/聚光）
+  totalClusters: number      // gridW × gridH × zSlices
+  litClusters: number        // count > 0 的 cluster 数
+  avgLightsPerCluster: number// 压缩比 = 它 / activeLights
+  truncatedClusters: number  // count 被 MAX_LIGHTS 截断的 cluster 数（>0 要报警）
+}
+```
+
+- `clusterCulling.ts` 的 `ClusterBuildResult` 增加 `litClusters` / `avgLightsPerCluster` / `truncatedClusters`（在已有的 `counts` 上顺手统计，零额外遍历）。
+- `clusterStore.ts`：`ClusterSnapshot` 的 observable 镜像 + `pushSnapshot()`，由 5Hz 采样器调用（与 `perfStore` 同款 `setInterval(200ms)` 模式，见 `perfStore.ts:5`；不要在 `useFrame` 里直接写 observable）。
+- 顺带修一处可见的不一致：`perfStats.gpuMs` 至今恒为 `null`（性能面板顶部「GPU 时间」一直显示「— / 待接计时扩展」），而逐 pass GPU 耗时其实已经可用 —— S3-d 用 `passTimes` 汇总回填该字段，或把这一格删掉，不要留一个永远空着的指标。
+
+##### 7.3.3.3 落地步骤
+
+| 步骤 | 内容 | 验收点 |
+| --- | --- | --- |
+| **S3-a** | `clusterParams.ts` + `ClusteredPanel.tsx`（开关 / 灯数下拉 / 灯阵旋转）+ 面板挂进 `hello-cube` 的技术模式（与 `ShadowPanel` 同级） | `?clustered=0&lightCount=32` 打开后控件正确回填；切换后 `gbufferShared.uClustered` 立即变化 |
+| **S3-b** | `LightRig.tsx` 程序化灯阵（点光 + 2 聚光，带 `distance`），按 `scene` 选布局：Cornell 贴四壁 / 户外绕模型 | 8 / 32 / 56 灯照明正确、无 NaN / 黑屏；关闭灯阵后画面与接入前一致 |
+| **S3-c** | 接线：`GBufferLightSync` 每帧把 `clustered` / `lightCount` / `lightSpin` 同步到 uniform 与灯阵；灯数被截断时 HUD 显式提示 | A/B 切换即时生效；`activeLights` 与实际灯数一致；截断时面板有告警 |
+| **S3-d** | 归因：`buildClusterLights` 前后打点算 `cullCpuMs`；统计写 `clusterStats` → 5Hz 采样 → 面板新增「Clustered」块（模式 / 灯数 / 平均灯数 / 压缩比 / 剔除 ms / cluster 数） | 面板有数；灯数 8→56 时 `cullCpuMs` 与 `avgLightsPerCluster` 单调上升；5Hz 采样不引起重渲染 |
+| **S3-e** | `e2e/clustered.spec.ts`：同 URL 同灯数下两种模式截图 A/B（复用 `shadow.spec.ts` 的 `diffStats`），加「关灯阵回归」用例 | A/B 线性域 `meanAbs < 1`、`overRatio < 1%`；噪声基线先测再定阈值 |
+| **S3-f**（建议同时做） | 建 `light-ssr` 站点条目（`src/site/demos.ts`）→ `wip`，limitations 按 7.3.3.6 的风险条目如实填写 | 站点上能看到「多光源 + 剔除」，不再是只有 hdr / pbr-ibl 两个 done |
+
+**进度（2026-11-03）**：S3-a 已完成接线骨架（`clusterParams` / `ClusteredPanel` / `ClusterSync` / `LightRig` / `e2e/clustered.spec.ts`），其中**参数默认值与面板文案留给本人定稿**（文件内已标 TODO）。过程中修掉两个会让 clustered 完全失效的剔除 bug，详见 DEVLOG 2026-11-03。S3-b 的灯位 / 强度仍待按场景手调。
+
+##### 7.3.3.4 灯数阶梯与要采集的数据
+
+| 点光数 | 合计灯数 | 期望现象 |
+| --- | --- | --- |
+| 0 | 4（主光 + 补光 + 2 聚光） | 回归基准：两条路径逐像素一致 —— 差异只应来自「贡献为 0 的灯被提前剔除」 |
+| 8 | 12 | 差异很小；`cullCpuMs` 已可见，用于说明「剔除不是免费的」 |
+| 32 | 36 | 压缩比明显（平均每 cluster 灯数远小于 36），GPU ms 开始出现可测差距 |
+| 56 | 60（留 4 槽余量） | 暴力前向的逐片元 60 次 BRDF vs clustered 的平均个位数；这是性能故事的主证据 |
+
+采集口径必须写进 README 性能表：**设备型号 / 分辨率 / DPR / 浏览器**，并注明 SwiftShader 数据不可用。
+
+##### 7.3.3.5 验收清单
+
+- [ ] clustered 与暴力前向在 0 / 8 / 32 / 56 点光下画面差异均在噪声级（**0 / 8 已验证：同一次加载内切换 meanAbs = 0.000、差异像素 0.00%**；32 / 56 未测）
+- [x] 关闭 clustered 后画面与接入前逐字节级一致（`lightCount` 默认 0 → 灯阵不挂载、不建 cluster；e2e 守护）
+- [ ] 面板显示 `activeLights`、`avgLightsPerCluster`、压缩比、`cullCpuMs`、`totalClusters`，且为 5Hz 采样
+- [ ] 灯数被 `MAX_LIGHTS` 截断时面板显式告警（不允许静默丢弃）
+- [x] `?clustered=` / `?lightCount=` 进 URL，A/B 两条链接可直接分享
+- [ ] 灯数阶梯表（8 / 32 / 56）的 GPU ms + 压缩比进 README 性能表
+- [ ] cluster 调试视图（tile 叠加 / 灯数热力）在满档（合计 60 盏）下仍有意义（热力不应全屏饱和）
+- [x] `npm run typecheck` / `build` / 全量用例通过；新增 A/B 用例（2026-11-03：20 passed）
+- [ ] 站点 `light-ssr` 条目不再是「规划中」，limitations 如实（CPU 剔除、无逐灯阴影、保守分配）
+
+##### 7.3.3.6 风险与坑
+
+1. **灯数上限静默截断**：`GBufferLightSync` 在 `count >= MAX_LIGHTS` 时直接 `return`，超出 64 的灯会悄无声息地不生效。必须回传 `activeLights` 到面板。
+2. **灯的 `range` 决定一切**：`range = 0` → 覆盖全部 cluster → clustered 等价于暴力打灯，A/B 会「测不出差异且看不出原因」。灯阵必须用有限 `distance`，且分布在中远景（灯全贴在相机附近同样会覆盖大半屏幕）。
+3. **CPU 剔除可能反超收益**：56 盏点光 × 各自覆盖的 cluster 数量，在 1080p / 24 切片下是数万到数十万次循环，JS 上可能吃掉 1–10 ms。这是**真实结论**，要如实报（「为什么阶段 4 要迁 compute」的论据），不能只报省下的 GPU 时间。
+4. **`counts` 被 clamp 到 `MAX_LIGHTS`**：截断后该 cluster 会漏光（灯被丢弃），表现为局部变暗。面板告警之外，灯阵布局要保证单 cluster 命中数远小于 64。
+5. **共享 uniform 的跨页残留**：`gbufferShared` 是模块级单例，切页面后 `uClustered` 会保留上一页的值。必须由 params 每帧单向同步（与 shadow 同款做法），不能只在开关回调里写。
+6. **统计口径要诚实**：「平均灯数」按 cluster 平均并按 tile 面积加权，不等于严格逐像素循环次数；文档与面板要标明这是估计值。
+7. **点光没有阴影**：`shadowFactor` 只对 `uShadowLightIndex`（主平行光）生效，点光会穿透物体照亮背面 —— 写进 limitations，不要假装是完整多光源。
+8. **GPU 计时可能不可用**：`EXT_disjoint_timer_query_webgl2` 在部分 Chrome / 驱动上已被移除，届时 `beauty` 行只有 CPU 提交耗时。降级口径：固定机位 + 关闭巡航，用「连续 N 帧帧时间中位数」对比两种模式，并在 README 注明测量方式与局限（帧时间含 VSync 与合成开销，只能看相对趋势）。
+
+##### 7.3.3.7 本轮明确不做
+
+- **逐光源阴影**（点光 cube shadow / 聚光锥 shadow）：成本极高，属 limitations。
+- **sphere-frustum 精确相交**：保留保守分配 + 如实标注；精确化留到迁 compute 时一起做。
+- **WebGPU compute 剔除**：阶段 4 的后端切分点，不在 S3。
+- **光源类型的物理单位换算**（three `decay` / 坎德拉）：先保证 A/B 与能量分配正确，单位换算记 TODO。
+- **GPU 侧逐像素循环次数直方图**：需要额外 pass + 无原子加，收益低于现有 cluster 平均指标。
 
 #### 7.3.4 S4 设计要点（动手前）
 

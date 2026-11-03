@@ -63,6 +63,8 @@ function float32Buffer(current: Float32Array<ArrayBuffer>, length: number): Floa
 /** 临时向量同样复用：函数同步执行，不会被并发打断 */
 const viewCenter = new THREE.Vector3()
 const viewCorner = new THREE.Vector3()
+/** 投影后的角点（NDC）。深度必须取自 viewCorner，不能取这个 —— 见 Pass A 的注释 */
+const ndcCorner = new THREE.Vector3()
 
 /**
  * 构建 Clustered 的 per-cluster 灯列表（CPU 基线）—— 作品集可优化 / 迁 GPU compute。
@@ -121,7 +123,11 @@ export function buildClusterLights(opts: {
       const minZ = viewCenter.z - r
       const maxZ = viewCenter.z + r // 视图空间 z 为负，越小越远
 
-      // 8 角投影到 NDC，取 xy / 深度范围
+      // 8 角分别取：视图空间 z 算深度、投影后 NDC xy 算覆盖 tile。
+      //
+      // 坑（2026-11-03 修）：`applyMatrix4(projectionMatrix)` 会把点变成 **NDC**（z ∈ [-1,1]），
+      // 早先直接拿 `-corner.z` 当「视图空间深度（正）」用，导致 log 切片全部错位、范围为空 ——
+      // 点光 / 聚光一盏都进不了 cluster 列表，clustered 路径实际只剩平行光。
       let ndcMinX = Infinity
       let ndcMaxX = -Infinity
       let ndcMinY = Infinity
@@ -131,24 +137,37 @@ export function buildClusterLights(opts: {
       for (let cx = 0; cx < 2; cx++) {
         for (let cy = 0; cy < 2; cy++) {
           for (let cz = 0; cz < 2; cz++) {
-            viewCorner.set(cx ? maxX : minX, cy ? maxY : minY, cz ? maxZ : minZ).applyMatrix4(proj)
-            ndcMinX = Math.min(ndcMinX, viewCorner.x)
-            ndcMaxX = Math.max(ndcMaxX, viewCorner.x)
-            ndcMinY = Math.min(ndcMinY, viewCorner.y)
-            ndcMaxY = Math.max(ndcMaxY, viewCorner.y)
-            const depth = -viewCorner.z // 视图空间深度（正）
+            viewCorner.set(cx ? maxX : minX, cy ? maxY : minY, cz ? maxZ : minZ)
+            const depth = -viewCorner.z // 视图空间 z 为负 → 取反即正距离
             depthMin = Math.min(depthMin, depth)
             depthMax = Math.max(depthMax, depth)
+
+            ndcCorner.copy(viewCorner).applyMatrix4(proj)
+            ndcMinX = Math.min(ndcMinX, ndcCorner.x)
+            ndcMaxX = Math.max(ndcMaxX, ndcCorner.x)
+            ndcMinY = Math.min(ndcMinY, ndcCorner.y)
+            ndcMaxY = Math.max(ndcMaxY, ndcCorner.y)
           }
         }
       }
-      tx0 = clamp(Math.floor(((ndcMinX + 1) / 2) * gw), 0, gw - 1)
-      tx1 = clamp(Math.floor(((ndcMaxX + 1) / 2) * gw), 0, gw - 1)
-      ty0 = clamp(Math.floor(((ndcMinY + 1) / 2) * gh), 0, gh - 1)
-      ty1 = clamp(Math.floor(((ndcMaxY + 1) / 2) * gh), 0, gh - 1)
-      // 深度→slice：depthMax 是最近（小 slice），depthMin 是最远（大 slice）
-      tz0 = clamp(Math.floor((Math.log(Math.min(depthMax, far) / near) / logRatio) * zs), 0, zs - 1)
-      tz1 = clamp(Math.floor((Math.log(Math.max(depthMin, near) / near) / logRatio) * zs), 0, zs - 1)
+
+      if (depthMax < near || depthMin > far) {
+        // 灯整体在近平面之后 / 远平面之外：记一个空范围（tx0 > tx1），Pass B 自然不写入
+        tx0 = 1
+        ty0 = 0
+        tx1 = 0
+        ty1 = 0
+        tz0 = 0
+        tz1 = 0
+      } else {
+        tx0 = clamp(Math.floor(((ndcMinX + 1) / 2) * gw), 0, gw - 1)
+        tx1 = clamp(Math.floor(((ndcMaxX + 1) / 2) * gw), 0, gw - 1)
+        ty0 = clamp(Math.floor(((ndcMinY + 1) / 2) * gh), 0, gh - 1)
+        ty1 = clamp(Math.floor(((ndcMaxY + 1) / 2) * gh), 0, gh - 1)
+        // 深度→slice：depth 是正距离，**depthMin = 最近、depthMax = 最远**（小 slice 近、大 slice 远）
+        tz0 = clamp(Math.floor((Math.log(Math.max(depthMin, near) / near) / logRatio) * zs), 0, zs - 1)
+        tz1 = clamp(Math.floor((Math.log(Math.min(depthMax, far) / near) / logRatio) * zs), 0, zs - 1)
+      }
     }
 
     ranges[li * 6 + 0] = tx0

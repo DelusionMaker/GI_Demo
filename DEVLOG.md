@@ -10,6 +10,64 @@
 
 ---
 
+## 2026-11-03 · p1-light-ssr S3-a：接线骨架落地 + 剔除的两个致命 bug
+
+### 目标
+
+把 Clustered 从「代码默认开、但无法演示」接成可 A/B 的形态：参数进 URL、面板可切、灯阵可调、A/B 有回归用例。按分工，**参数默认值与面板文案留给本人定稿**，其余（同步、挂载、灯阵样板、用例）本轮搭好。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/clusterParams.ts` | 新增（骨架） | `clustered` / `lightCount` / `lightSpin` + 离散档位；默认值与档位标注「你来定稿」 |
+| `src/core/postfx/ClusteredPanel.tsx` | 新增（骨架） | 面板控件就位；问题陈述 / 文案 / S3-d 统计行留 TODO |
+| `src/core/postfx/ClusterSync.tsx` | 新增 | 每帧把策略写进 `gbufferShared.uClustered`；无额外光源时不启用剔除 |
+| `src/core/postfx/LightRig.tsx` | 新增（样板） | 程序化灯阵（N 点光 + 2 聚光），灯位 / 强度按场景由 demo 传入，待手调 |
+| `src/core/postfx/clusterCulling.ts` | **修 bug** | 切片深度改用视图空间 z；修正 slice 上下界；补「灯在相机背后」的空范围分支 |
+| `src/demos/hello-cube/index.tsx` | 改造 | 挂 `ClusterSync` / `LightRig`（须在 `GBufferLightSync` 之前）、技术模式加 `ClusteredPanel` |
+| `e2e/clustered.spec.ts` | 新增 | 面板回填 / 默认无脏参数 / 档位写回 URL / 灯阵生效 / **同一次加载内 A/B 一致性** |
+
+### 关键决策
+
+1. **参数不进 demo 的 `DemoParams`**：多光源是场景级渲染特性，HDR / pbr-ibl 页面共用一个 Stage 也要能用；也不塞 `hdrParams`（那是后处理链的语义）。与 `shadowParams` 同构。
+2. **灯数是离散档位而不是滑杆**：性能对照表要固定梯级才能复现，滑杆的中间值无法对照、链接也失去意义。档位 0 / 8 / 32 / 56（`MAX_LIGHTS = 64` 是所有灯合计，场景固定占 4 盏）。
+3. **`lightCount = 0` 时不构建 cluster**：只有 2 盏平行光时它们覆盖全部 cluster，剔除零收益，却要每帧重建 + 上传约 1.5 MB 数据纹理。这条保证「默认进入零回归」，也是 `ClusterSync` 里 `clustered && lightCount > 0` 的由来。
+4. **A/B 必须在同一次页面加载内切换**：相机有飞入插值，两次 `goto` 的收敛进度不同，实测会把相机差异误读为着色差异（同一组参数两次加载差到 8 luma）。
+
+### 踩坑与修复（本轮最值得记的一条）
+
+现象：`clustered` 路径的画面比暴力前向暗约 9 luma（78.5 vs 69.0），但**没有任何报错**。
+
+1. **切片深度误用了 NDC 的 z**
+   - `viewCorner.copy(corner).applyMatrix4(camera.projectionMatrix)` 得到的是 **NDC**（z ∈ [-1,1]），旧代码却拿 `-corner.z` 当「视图空间深度（正）」。于是 `log(depth/near)` 落在负数上，切片范围恒为空。
+   - 修复：深度取**未投影**的 `viewCorner.z`（视图空间 z 为负，取反即正距离），另用 `ndcCorner` 单独承接投影结果取 xy 覆盖范围。
+2. **修完深度后仍暗 9 luma（78.5 vs 69.0）：slice 上下界写反**
+   - 诊断方式：临时把 `sumCounts`（所有 cluster 的灯数之和）挂到 `globalThis` —— 结果恒为 `2 × totalClusters`，说明每个 cluster 只有两盏平行光；再看首盏点光的范围 `[tx0,ty0,tz0,tx1,ty1,tz1] = [0,0,14,44,31,12]`，`tz0 > tz1`，循环一次都不执行。
+   - 根因：`depth` 是正距离后，`depthMin` 是**最近**、`depthMax` 是**最远**，而代码仍按旧语义把最远塞给 `tz0`。修复：`tz0` 取 `depthMin`、`tz1` 取 `depthMax`。
+   - 顺带补「灯整体在近平面之后 / 远平面之外」的分支，写空范围而不是让范围填满全屏。
+3. **教训**：这类「画面只是偏暗」的错误不会触发 GL 错误、也不会被类型检查拦住。**必须有一个像素级 A/B 用例**，否则它会一直躺在代码里，直到面试演示时才发现多光源没生效。
+
+### 验证
+
+- `npm run typecheck` / `npm run build`：通过。
+- `npx playwright test e2e/clustered.spec.ts`：**5 passed**。
+  - 面板回填（`?clustered=0&lightCount=8` 精确回填）、默认 URL 无 `clustered` / `lightCount` 键、档位切换写回 URL。
+  - 灯阵生效：`lightCount` 0 → 8，画面平均亮度提升超过阈值（灯确实进了 uniform 数组）。
+  - **A/B 一致性：`clustered` 与暴力前向同一次加载内切换，平均差 0.000、差异像素 0.00%**（12 盏灯）。
+- 全量 `npx playwright test`：**20 passed**（原 15 + 新增 5），既有 HDR / G-Buffer / 阴影 / 户外用例无回归。
+- 中间量：`clusterLights = 12`（2 平行光 + 8 点光 + 2 聚光）、`sumCounts = 179127`（修 slice 顺序前恒为 109056 = 2 × 54528）。
+
+### 遗留 / 下一步
+
+1. **参数与文案定稿**（本人）：`clusterParams.ts` 的三个默认值、`ClusteredPanel.tsx` 的问题陈述与标签。
+2. **S3-b**：灯位 / 强度 / 聚光朝向按 Cornell 与户外分别手调。
+3. **S3-c**：`activeLights` 回传 + 灯数截断告警（当前 `MAX_LIGHTS` 溢出是静默的）。
+4. **S3-d**：`cullCpuMs` + 平均每 cluster 灯数 / 压缩比进面板（5Hz 采样）。灯数 56 时的 CPU 剔除耗时尚未测量，可能反超收益。
+5. **S3-f**：站点 `light-ssr` 条目仍未建，评审目前看不到这部分。
+
+---
+
 ## 2026-11-03 · 文档同步：补齐四个未入账提交、进度快照与「完成即止」排期口径
 
 ### 目标

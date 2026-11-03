@@ -14,6 +14,9 @@ import { PerfPanel } from '@/core/perf/PerfPanel'
 import { CanvasRoot } from '@/core/renderer/CanvasRoot'
 import { HDRPanel } from '@/core/postfx/HDRPanel'
 import { ShadowPanel } from '@/core/postfx/ShadowPanel'
+import { ClusteredPanel } from '@/core/postfx/ClusteredPanel'
+import { ClusterSync } from '@/core/postfx/ClusterSync'
+import { LightRig } from '@/core/postfx/LightRig'
 import { hdrStore } from '@/core/postfx/hdrStore'
 import { hdrParams } from '@/core/postfx/hdrParams'
 import { shadowParams } from '@/core/postfx/shadowParams'
@@ -370,6 +373,14 @@ const Stage = observer(function Stage({ variant = 'default' }: { variant?: Stage
           shadow-mapSize-height={1024}
         />
         <directionalLight position={[-4, 2.5, -3]} intensity={0.6} color="#8fb6ff" />
+        {/* p1-light-ssr S3：剔除策略每帧同步（必须挂在 GBufferLightSync 之前，见 ClusterSync 注释） */}
+        <ClusterSync />
+        {/* 程序化灯阵：lightCount = 0 时不渲染任何灯，现有页面逐像素不变 */}
+        <LightRig
+          radius={scene === 'cornell' ? 1.9 : scene === 'outdoor' ? 7.5 : 2.4}
+          height={scene === 'cornell' ? 2.9 : scene === 'outdoor' ? 3.8 : 2.2}
+          range={scene === 'cornell' ? 3.2 : scene === 'outdoor' ? 9 : 4}
+        />
         {/* p1-pbr-ibl：场景灯光 → 材质 uniform；HDR / RoomEnvironment → 立方体贴图（IBL 原料） */}
         <GBufferLightSync />
         <GBufferEnvironment url={SCENES[scene].envUrl} />
@@ -402,12 +413,14 @@ const Stage = observer(function Stage({ variant = 'default' }: { variant?: Stage
               <>
                 <ShadowPanel />
                 <HDRPanel />
+                <ClusteredPanel />
                 <DemoControls />
               </>
             ) : (
               <>
                 <HDRPanel />
                 <ShadowPanel />
+                <ClusteredPanel />
                 <DemoControls />
               </>
             )
