@@ -71,7 +71,6 @@ function DemoCard({ demo }: { demo: DemoMeta }) {
         <div className="tag-row">
           <span className="pill">{demo.stack}</span>
           <span className={`pill pill-${demo.perf}`}>{PERF_LABEL[demo.perf]}</span>
-          <span className="pill">工作量 {demo.effort}</span>
         </div>
         <div className="card-metric">{demo.metric}</div>
       </div>

@@ -17,6 +17,7 @@ import { ShadowPanel } from '@/core/postfx/ShadowPanel'
 import { ClusteredPanel } from '@/core/postfx/ClusteredPanel'
 import { ClusterSync } from '@/core/postfx/ClusterSync'
 import { LightRig } from '@/core/postfx/LightRig'
+import { clusterParams } from '@/core/postfx/clusterParams'
 import { hdrStore } from '@/core/postfx/hdrStore'
 import { hdrParams } from '@/core/postfx/hdrParams'
 import { shadowParams } from '@/core/postfx/shadowParams'
@@ -495,3 +496,35 @@ const ShadowsStage = observer(function ShadowsStage() {
 })
 
 export const shadowDemo: DemoModule = { Stage: ShadowsStage }
+
+/**
+ * p1-light-ssr 页面：默认户外 + 32 盏点光 + Clustered + 技术模式。
+ *
+ * 选户外而不是 Cornell：Cornell 只有 8 个 mesh，灯全挤在小房间里，
+ * cluster 热力会接近全屏饱和；户外空间大、灯阵分布在中远景，剔除的
+ * 空间差异才看得出来（TODO 7.7 同款理由）。
+ *
+ * ⚠️ clusterParams 是全站单例：离开本页必须复位，否则其他 demo 会带着
+ * 32 盏灯和每帧 cluster 构建运行，破坏批次 1 定稿的「默认零回归」。
+ * 显式带 query 的参数一律不覆盖，保证分享链接可复现。
+ */
+const LightSsrStage = observer(function LightSsrStage() {
+  const [ready, setReady] = useState(false)
+
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search)
+    if (!query.has('scene')) store.set({ scene: 'outdoor' })
+    if (!query.has('presentation')) store.set({ presentation: false })
+    if (!query.has('speed')) store.set({ speed: 0 })
+    if (!query.has('clustered')) clusterParams.set({ clustered: true })
+    if (!query.has('lightCount')) clusterParams.set({ lightCount: 32 })
+    if (!query.has('lightSpin')) clusterParams.set({ lightSpin: false })
+    setReady(true)
+
+    return () => clusterParams.reset()
+  }, [])
+
+  return ready ? <Stage /> : null
+})
+
+export const lightSsrDemo: DemoModule = { Stage: LightSsrStage }

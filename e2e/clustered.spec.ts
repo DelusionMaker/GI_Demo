@@ -182,21 +182,63 @@ test('归因面板显示剔除统计（灯数 / 平均每 cluster / 剔除 CPU�
  * - 切片深度误用 NDC 的 z（点光/聚光一盏都进不了 cluster）；
  * - 切片上下界写反（tz0 > tz1 → 范围恒空）。
  * 任一复发都会让 clustered 只剩平行光，亮度明显低于 brute。
+ *
+ * 灯数覆盖 8 / 32 / 56 三档（56 + 场景固定 4 盏 = 60，MAX_LIGHTS=64 留余量），
+ * 这是 S3-e 的剩余验收项：高档位下截断 / 数据纹理行数都可能出问题。
  */
-test('clustered 与暴力前向画面一致（同一次加载内切换）', async ({ page }) => {
-  await page.goto('/d/hello-cube?presentation=0&speed=0&scene=cornell&clustered=1&lightCount=8')
+for (const lightCount of [8, 32, 56]) {
+  test(`clustered 与暴力前向画面一致（${lightCount} 盏点光，同一次加载内切换）`, async ({ page }) => {
+    await page.goto(
+      `/d/hello-cube?presentation=0&speed=0&scene=cornell&clustered=1&lightCount=${lightCount}`,
+    )
+    const panel = page.locator(PANEL)
+    await expect(panel).toBeVisible({ timeout: 20_000 })
+
+    // 等相机飞入收敛，两次截图要落在同一机位
+    await page.waitForTimeout(1800)
+
+    const clustered = await shootCanvas(page)
+    await panel.locator('input[type="checkbox"]').first().uncheck()
+    await page.waitForTimeout(600)
+    const brute = await shootCanvas(page)
+
+    const diff = diffStats(clustered, brute)
+    expect(diff.meanAbs, `平均差 ${diff.meanAbs.toFixed(3)}`).toBeLessThan(1)
+    expect(diff.overRatio, `差异像素 ${diff.overRatio.toFixed(2)}%`).toBeLessThan(1)
+  })
+}
+
+/** 站点入口：/d/light-ssr 必须真的渲染，且默认带灯阵与剔除归因（不能落到「规划中」占位）。 */
+test('light-ssr 站点入口默认展示多光源与剔除归因', async ({ page }) => {
+  const errors = collectErrors(page)
+  await page.goto('/d/light-ssr')
+  await expect(page.locator('canvas').first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.demo-title')).toHaveText('多光源与 Clustered 剔除')
+  await expect(page.locator('.stage-planned')).toHaveCount(0)
+
   const panel = page.locator(PANEL)
-  await expect(panel).toBeVisible({ timeout: 20_000 })
+  await expect(panel).toBeVisible({ timeout: 30_000 })
+  await expect(panel.locator('select')).toHaveValue('32')
+  await expect(page.locator('.perf-cluster')).toContainText('已启用', { timeout: 20_000 })
+  await expect(page.locator('.perf-pass-row:has-text("平均每 cluster")')).toContainText('盏')
+  expect(errors, `控制台错误：\n${errors.join('\n')}`).toEqual([])
+})
 
-  // 等相机飞入收敛，两次截图要落在同一机位
-  await page.waitForTimeout(1800)
+/**
+ * 跨页复位：clusterParams 是全站单例，离开 light-ssr 必须回到默认 0，
+ * 否则其他 demo 会带着 32 盏灯 + 每帧 cluster 构建运行，破坏「默认零回归」。
+ * 必须走站内 Link（SPA 路由），两次 goto 会重载模块、测不出单例残留。
+ */
+test('站内切页后不残留灯阵（clusterParams 单例复位）', async ({ page }) => {
+  await page.goto('/d/light-ssr')
+  await expect(page.locator(PANEL).locator('select')).toHaveValue('32')
 
-  const clustered = await shootCanvas(page)
-  await panel.locator('input[type="checkbox"]').first().uncheck()
-  await page.waitForTimeout(600)
-  const brute = await shootCanvas(page)
+  await page.locator('.backlink').click()
+  await page.locator('.card:has-text("HDR 管线与色调映射")').click()
+  await expect(page).toHaveURL(/\/d\/hdr/)
 
-  const diff = diffStats(clustered, brute)
-  expect(diff.meanAbs, `平均差 ${diff.meanAbs.toFixed(3)}`).toBeLessThan(1)
-  expect(diff.overRatio, `差异像素 ${diff.overRatio.toFixed(2)}%`).toBeLessThan(1)
+  // store 单例下 light-ssr 设的 presentation=false 会残留，技术模式面板仍可见，
+  // 可直接读 select 判断 lightCount 是否复位。
+  await expect(page.locator(PANEL).locator('select')).toHaveValue('0')
+  await expect(page.locator('.perf-cluster')).not.toContainText('已启用')
 })

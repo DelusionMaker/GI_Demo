@@ -10,6 +10,50 @@
 
 ---
 
+## 2026-11-06 · 批次 2 首项：light-ssr 站点条目上线 + S3-e 高档位 A/B
+
+### 目标
+
+让 Clustered 从「代码里有」变成「评审点得到」：建 `light-ssr` 独立站点条目与可运行 Stage，并收掉 S3-e 剩下可自动化的部分（32 / 56 灯 A/B）。本轮不改渲染算法、不做 SSR。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/demos/hello-cube/index.tsx` | 改造 | 新增 `LightSsrStage`（默认户外 / 32 盏点光 / Clustered / 技术模式），cleanup 复位 `clusterParams` |
+| `src/demos/index.ts` | 改造 | 登记 `light-ssr` → `DEMO_MODULES` |
+| `src/site/demos.ts` | 改造 | 新增第 8 条元数据（问题陈述 / 算法 / 公式 / 局限 / 参考），`status: wip` |
+| `src/site/HomePage.tsx` / `DemoPage.tsx` | 改造 | 去掉「工作量 X 天」pill（与「不设期限」口径冲突） |
+| `e2e/clustered.spec.ts` | 改造 | A/B 参数化到 8 / 32 / 56；新增站点入口与跨页复位用例 |
+| `README.md` / `CASE_STUDY.md` / `TODO.md` | 文档 | 入口、验证数据、快照与验收清单追平 |
+
+### 关键决策
+
+1. **默认场景选户外而非 Cornell**：Cornell 只有 8 个 mesh，32 盏灯挤在小房间里，cluster 热力接近全屏饱和；户外空间大、灯阵分布在中远景，剔除的空间差异才看得出来（TODO 7.7）。
+2. **跨页必须复位**：`clusterParams` 是全站单例，不 reset 的话离开本页后其他 demo 会带着 32 盏灯和每帧 cluster 构建运行，直接破坏批次 1 定稿的「默认零回归」。`LightSsrStage` 的 `useEffect` cleanup 调 `clusterParams.reset()`，并用 SPA 内 Link 跳转的用例守护（两次 `goto` 会重载模块，测不出单例残留）。
+3. **站点条目 `wip` 而非 `done`**：多光源与剔除主体完成，但 SSR（S4）未开工、灯位与面板文案待本人定稿、真机 GPU 数据待采，不能标完成。
+4. **A/B 覆盖到 56 盏**：56 + 场景固定 4 盏 = 60，逼近 `MAX_LIGHTS=64`，能顺带压到数据纹理行数与截断路径；三档全部同一次加载内切换，避免相机飞入插值污染差异。
+5. **去掉「工作量 X 天」展示**：排期口径已改为「不设期限、完成即止」，站点卡片与详情页不再展示工期；`effort` 字段保留为历史元数据。
+
+### 踩坑与修复
+
+1. 无新增运行时错误。跨页复位用例特意走 `.backlink` → 首页 → 卡片的 SPA 路由，而不是 `page.goto`，否则模块重新构造会让「残留」自动消失，形成假阳性。
+2. 像素级回归数值在 SwiftShader 上有帧间噪声（自建链 vs 直出 0.187 → 0.190 → 0.212），文档统一写成约数 ≈0.2，判据始终是阈值不是具体数字。
+3. 构建体积随新增页面从 1,378.32 增至 1,382.35 kB，文档已注明「以 `npm run build` 输出为准」，避免每次改动都追数字。
+
+### 验证（2026-11-06 复跑）
+
+- `npm run typecheck` / `npm run build`：通过。671 modules；`index` 115.83 kB（gzip 41.60）/ `vendor` 572.64 kB（gzip 177.75）/ `three` 693.88 kB（gzip 179.91），合计 1,382.35 kB / gzip 399.26 kB。
+- `npx playwright test`：**26 passed**（原 22 + A/B 参数化新增 2 + 站点入口 1 + 跨页复位 1）。8 / 32 / 56 三档 A/B 全部 `meanAbs < 1`、`overRatio < 1%`；其余 HDR / G-Buffer / 阴影 / 户外 / 白炉 / 演示模式无回归。
+- 站点入口：`.demo-title` 为「多光源与 Clustered 剔除」、无「规划中」占位、面板回填 32、归因显示「已启用」、零 console error。
+
+### 遗留 / 下一步
+
+1. **需本人完成**：真机 GPU 性能采样；`ClusteredPanel` 与站点条目的文案定稿；`LightRig` 灯位 / 强度按 Cornell / 户外手调；真实 GPU 目视复核；封面 GIF / hero 截图；LICENSE 选择。
+2. **可继续自动化**：S3-e 满档 60 灯的 `cluster:heat` 不饱和验证、SSR（S4）、WebGPU 冒烟（验证整条 Pipeline 在 WebGPURenderer 下的可行性）。
+
+---
+
 ## 2026-11-06 · 批次 1 可信度收口：默认值定稿 + 产物拆包 + 展示层追平
 
 ### 目标

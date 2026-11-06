@@ -32,7 +32,6 @@ export function DemoPage() {
           <span className="pill">{LAYER_LABEL[meta.layer]}</span>
           <span className="pill">{meta.stack}</span>
           <span className={`pill pill-${meta.perf}`}>{PERF_LABEL[meta.perf]}</span>
-          <span className="pill">工作量 {meta.effort}</span>
           <span className={`status status-${meta.status}`}>{STATUS_LABEL[meta.status]}</span>
         </div>
         {meta.problem ? <p className="demo-problem">{meta.problem}</p> : null}

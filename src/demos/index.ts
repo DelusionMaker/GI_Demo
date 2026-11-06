@@ -1,4 +1,4 @@
-import { helloCubeDemo, pbrIblDemo, shadowDemo } from './hello-cube'
+import { helloCubeDemo, pbrIblDemo, shadowDemo, lightSsrDemo } from './hello-cube'
 import type { DemoModule } from './types'
 
 /**
@@ -15,4 +15,6 @@ export const DEMO_MODULES: Record<string, DemoModule> = {
   'pbr-ibl': pbrIblDemo,
   // p1-shadow：同一个 Stage，默认 Cornell + 阴影开启 + 技术模式
   shadows: shadowDemo,
+  // p1-light-ssr：多光源 + Clustered 剔除，默认户外 + 32 盏点光 + 技术模式
+  'light-ssr': lightSsrDemo,
 }

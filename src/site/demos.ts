@@ -17,6 +17,7 @@ export interface DemoMeta {
   perf: PerfKind
   /** 一个关键指标，首页卡片展示，如「1 spp 起始 · 收敛至 512 spp」 */
   metric: string
+  /** 历史元数据：排期口径已改为「不设期限」，站点不再展示该字段 */
   effort: string
   status: DemoStatus
   problem?: string
@@ -180,6 +181,47 @@ export const DEMOS: DemoMeta[] = [
       '投影物筛选按 castShadow 标记逐帧切换 visible，未处理 alphaTest 投影（透明片会投出实心影子）。',
     ],
     sources: [{ label: 'Real-Time Shadows', href: 'https://www.realtimeshadows.com/' }],
+  },
+  {
+    id: 'light-ssr',
+    title: '多光源与 Clustered 剔除',
+    oneLiner: '一帧几十盏灯时，逐像素遍历全部光源会重复算 BRDF；按屏幕分块 + 深度切片预分配灯列表，只取本块命中的灯。',
+    layer: 'L1',
+    stack: 'WebGL2 · 数据纹理',
+    perf: 'realtime',
+    metric: '暴力 / Clustered 同帧 A/B · 60 盏灯上界 · cluster 热力可切',
+    effort: '5–8 天',
+    status: 'wip',
+    problem:
+      '多光源的难点不在「能不能照亮」，而在「怎么证明剔除没有漏光」以及「剔除自身的开销是否值得」。本页把两条着色路径做成同一次加载内可切换的 A/B，并把逐 cluster 灯数、循环节省与 CPU 剔除耗时一起显示，避免只报收益不报成本。',
+    algorithm: [
+      '灯表：4 个 vec4[64] SoA uniform 数组存位置 / range、颜色 / 类型、方向 / 锥角，MAX_LIGHTS=64（含场景固定的 4 盏）。',
+      'CPU 剔除：16×16 像素 tile × 24 个对数深度切片（近密远疏），按灯的有限 range 做保守范围分配，每帧重建。',
+      '两张 RGBA32F 数据纹理承载 per-cluster (offset, count) 与扁平灯号索引；gbuffer.frag 用 texelFetch 取本 cluster 灯列表，与暴力前向共用同一个 lightContribution()。',
+      '中间量：hdrDebug=cluster:tiles 看 tile 叠加，cluster:heat 看每 cluster 灯数热力；性能面板 5Hz 采样 activeLights / 平均每 cluster 灯数 / 循环节省 / cullCpuMs，灯数被截断时显式告警。',
+      'A/B：?clustered=0 切到暴力前向；灯数离散档位 0 / 8 / 32 / 56，链接可直接分享复现。',
+    ],
+    formulas: [
+      'slice = floor( log(viewZ / near) / log(far / near) × zSlices )',
+      'clusterIdx = tileX + tileY × gridW + slice × gridW × gridH',
+      '循环节省 ≈ 1 − avgLightsPerCluster / activeLights（按 cluster 平均，非严格逐像素）',
+    ],
+    limitations: [
+      'CPU 剔除每帧 2–6 ms（SwiftShader 趋势值），快显卡上可能反超 GPU 侧省下的逐片元循环；真实 GPU 数据待采，阶段 4 迁 compute 是这条结论的后续。',
+      'Forward-Clustered 而非 Deferred：gAlbedo 存的是前向最终着色，不引入独立光照 pass。',
+      '剔除是「保守范围分配」，不是精确 sphere-frustum 相交，会多分配一些灯；WebGL2 无 SSBO，只能走数据纹理。',
+      'MAX_LIGHTS=64 截断时该 cluster 会漏光（局部变暗），面板同时报「请求 / 生效」与截断 cluster 数。',
+      '点光 / 聚光无逐灯阴影（阴影只对主平行光生效）、无物理单位换算、多灯能量守恒仍是朴素逐灯叠加。',
+      'SSR（S4）尚未开工；本页目前只覆盖多光源与剔除。',
+      '性能表只有软件渲染器趋势数据，不能作为作品集性能数据引用。',
+    ],
+    sources: [
+      {
+        label: 'Clustered Deferred and Forward Shading (Olsson et al., 2012)',
+        href: 'https://www.cse.chalmers.se/~olaolss/main_page/publications/clustered_shading_preprint.pdf',
+      },
+      { label: 'three.js 文档', href: 'https://threejs.org/docs/' },
+    ],
   },
   {
     id: 'bake-gi',
