@@ -10,6 +10,52 @@
 
 ---
 
+## 2026-11-06 · S3-e 收口：cluster:heat 满档饱和修复与不饱和回归
+
+### 目标
+
+验收「满档 60 灯下 cluster 热力仍有信息量」。先量化再修：探测发现固定分母确实饱和，改为本帧峰值自适应归一化，并把判据固化成 e2e 用例。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/clusterCulling.ts` | 改造 | `ClusterBuildResult` 增加 `maxLightsPerCluster`，在既有截断循环里零额外遍历统计 |
+| `src/core/postfx/materials/gbufferShared.ts` / `shaders/gbuffer.frag` | 改造 | 新增 `uClusterMaxCount` uniform 与声明；订正 `uClustered` 过时注释 |
+| `src/core/postfx/GBufferLightSync.tsx` | 改造 | 每帧把峰值写进热力分母；无 cluster 分支复位为 1（防跨页残留） |
+| `src/core/postfx/shaders/lib/gbuffer_debug.glsl` | 修复 | 热力由固定 `count / 16` 改为 `count / max(uClusterMaxCount, 1)` 线性归一化 |
+| `src/core/postfx/clusterStats.ts` / `clusterStore.ts` / `src/core/perf/PerfPanel.tsx` | 改造 | 峰值灯数进 5Hz 采样，面板显示「每 cluster 峰值（热力分母）」 |
+| `e2e/clustered.spec.ts` | 改造 | 新增满档 60 灯热力不饱和用例（色阶 / 纯红占比 / 切回完整链路 A/B） |
+
+### 关键决策
+
+1. **先量化再定阈值**：临时探测用例打印 R−B 色阶直方图。修复前 `activeBins=2`、`clampRatio=0.509`、`coolRatio=0` —— 51% 像素顶到纯红，热力退化成两档色块，验收项确实不通过，不是「看着还行」。
+2. **分母自适应而不是换个更大的常数**：固定 /16 在 60 盏下饱和，改成 /64 又会在低档位（8 盏）全蓝。取本帧单 cluster 峰值兼顾两端；峰值在性能面板可见，评审问「按什么归一化」有答案。
+3. **线性优于对数**：先试 `log(1+count)/log(1+denom)`，色阶只从 2 增到 4（低灯数被抬高）；改线性 `count/denom` 后色阶 7 档、纯红降到 15.6%，语义也更直观（「占本帧峰值的百分之几」）。
+4. **A/B 必须证明开关生效**：用例在同一次加载内把调试下拉从 `cluster:heat` 切回 `none`，断言像素差 > 20，否则「热力没生效但色阶断言碰巧通过」会成假阳性。
+5. **`coolRatio` 不设下界**：2 盏平行光覆盖全部 cluster，本场景最小 count 也有 8 盏，冷色端本就不出现；把「没有冷色」当饱和会误判。
+
+### 验证（2026-11-06）
+
+- `npm run typecheck` / `npm run build`：通过（671 modules；`index` 116.50 kB / gzip 41.75，合计 1,383.02 kB / gzip 399.41 kB）。
+- `npx playwright test`：**27 passed**（新增 1 条）。
+- 满档热力实测（56 点光 + 场景 4 盏 = 60，Cornell / SwiftShader，R−B 色阶直方图）：
+
+| 方案 | 显著色阶 | 顶到纯红 | 偏红像素 |
+| --- | --- | --- | --- |
+| 修复前 `count/16` | 2 | 50.9% | 51.0% |
+| 对数 `log/log` | 4 | — | 51.0% |
+| **线性 `count/峰值`** | **7** | **15.6%** | **30.1%** |
+
+正式用例阈值：色阶 ≥ 5、纯红 < 30%、偏红 < 45%、切回完整链路 `meanAbs > 20`。
+
+### 遗留 / 下一步
+
+1. **需本人完成**：真机 GPU 性能采样、面板 / 站点文案与灯位定稿、真实 GPU 目视复核（含 `cluster:heat` 在户外场景的分布）、封面 GIF、LICENSE。
+2. **可继续自动化**：SSR（S4）、WebGPU 冒烟。
+
+---
+
 ## 2026-11-06 · 批次 2 首项：light-ssr 站点条目上线 + S3-e 高档位 A/B
 
 ### 目标

@@ -19,6 +19,7 @@ export class ClusterStore {
   avgLightsPerCluster = 0
   cullCpuMs = 0
   truncatedClusters = 0
+  maxLightsPerCluster = 0
 
   private timer: ReturnType<typeof setInterval> | null = null
 
@@ -32,6 +33,7 @@ export class ClusterStore {
       avgLightsPerCluster: observable,
       cullCpuMs: observable,
       truncatedClusters: observable,
+      maxLightsPerCluster: observable,
       sample: actionBound,
     })
   }
@@ -56,6 +58,7 @@ export class ClusterStore {
     this.avgLightsPerCluster = clusterStats.avgLightsPerCluster
     this.cullCpuMs = clusterStats.cullCpuMs
     this.truncatedClusters = clusterStats.truncatedClusters
+    this.maxLightsPerCluster = clusterStats.maxLightsPerCluster
   }
 }
 

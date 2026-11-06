@@ -19,12 +19,13 @@
 **展示层缺口（2026-11-06 二次复核）**：
 
 1. **性能故事仍为空（唯一未解）**：README / CASE_STUDY 的性能表已改成「采集口径 + 待真机填写」模板，但逐 pass GPU 计时从未在真实 GPU 上采样 —— 筛选标准第 3 条的唯一证据。
-2. ~~对外文档数值腐烂~~ **已修**：README / CASE_STUDY 追平到 26 passed / 671 modules / IBL A/B 8.478 等当前数据；站点 `deep-gi` 已改为 DDGI 锁定。
+2. ~~对外文档数值腐烂~~ **已修**：README / CASE_STUDY 追平到 27 passed / 671 modules / IBL A/B 8.478 等当前数据；站点 `deep-gi` 已改为 DDGI 锁定。
 3. ~~默认值口径矛盾~~ **已修**：`lightCount` 定稿 0，e2e 增加像素级零回归守护（见 DEVLOG 2026-11-06）。
-4. ~~多光源不可见~~ **已修**：`light-ssr` 站点条目已建（第 8 条，`wip`），默认户外 + 32 盏点光 + 技术模式，26 个用例含站点入口与跨页复位回归。
-5. **仍缺（需本人参与）**：首页卡片封面 GIF / hero 截图仍是占位；`ClusteredPanel` 与站点条目的文案、灯位 / 强度待定稿；SSR 无页面；WebGPU 零实测 —— `capabilities.detect` 与 `Pipeline` 依赖 WebGL2，`three/webgpu` 单点分叉假设未验证；代码未附 LICENSE。
+4. ~~多光源不可见~~ **已修**：`light-ssr` 站点条目已建（第 8 条，`wip`），默认户外 + 32 盏点光 + 技术模式，27 个用例含站点入口、跨页复位与满档热力不饱和回归。
+5. ~~满档热力饱和~~ **已修**：热力分母改为本帧单 cluster 峰值线性归一化，色阶 2 → 7、纯红 50.9% → 15.6%（见 DEVLOG 2026-11-06）。
+6. **仍缺（需本人参与）**：首页卡片封面 GIF / hero 截图仍是占位；`ClusteredPanel` 与站点条目的文案、灯位 / 强度待定稿；SSR 无页面；WebGPU 零实测 —— `capabilities.detect` 与 `Pipeline` 依赖 WebGL2，`three/webgpu` 单点分叉假设未验证；代码未附 LICENSE。
 
-**建议推进顺序（不绑定日期）**：真机 GPU 性能采样 → 面板 / 站点文案与灯位手调（本人）→ S3-e 满档热力验证 → SSR → WebGPU 冒烟（验证整条 Pipeline，不只是 `navigator.gpu`）→ Sponza 室内（与烘焙一并做）→ 烘焙 / GI 主线（probe 层按 DDGI 可复用设计）→ DDGI → 收尾。
+**建议推进顺序（不绑定日期）**：真机 GPU 性能采样 → 面板 / 站点文案与灯位手调（本人）→ SSR → WebGPU 冒烟（验证整条 Pipeline，不只是 `navigator.gpu`）→ Sponza 室内（与烘焙一并做）→ 烘焙 / GI 主线（probe 层按 DDGI 可复用设计）→ DDGI → 收尾。
 
 ---
 
@@ -49,7 +50,7 @@
 
 - **与手册建议的偏差**：手册 3.5 建议「复杂多 pass 页用 vanilla three」。本项目按用户要求统一走 R3F。缓解方式：渲染核心保持与 React 无关的 module/class，React 只负责挂载与 UI，避免 reconciler 与自建多 pass 管线互相打架。**该缓解方案在 p0-hdr 落地时正式执行，见「三」的方案 A。**
 - **`onBeforeCompile` 脆弱**：依赖 three 内部 chunk 命名，必须锁 three 版本、集中管理注入点、加冒烟测试（手册 3.7）。
-- **构建体积**：2026-11-06 起 `manualChunks` 已拆出 three / vendor：671 modules，合计 **1,382.35 kB（gzip 399.26 kB）** = `index` 115.83 + `vendor` 572.64 + `three` 693.88 kB（以 `npm run build` 输出为准）。`three` / `vendor` 仍触发 >500 kB 告警，进一步拆分需按 demo 动态 import（推迟到 eng-shared）。
+- **构建体积**：2026-11-06 起 `manualChunks` 已拆出 three / vendor：671 modules，合计 **1,383.02 kB（gzip 399.41 kB）** = `index` 116.50 + `vendor` 572.64 + `three` 693.88 kB（以 `npm run build` 输出为准）。`three` / `vendor` 仍触发 >500 kB 告警，进一步拆分需按 demo 动态 import（推迟到 eng-shared）。
 - **MobX 7 是新主版本**：注解值必须是 `Annotation` 对象（v6 允许的 `"action.bound"` 字符串写法已失效），绑定动作改用 `actionBound`。新增 store 时不要照抄 v6 示例。
 - **性能归因**：不要只看 `renderer.info`（不含 GPU 时间），需接 `EXT_disjoint_timer_query_webgl2` / WebGPU timestamp-query 自己测每个 pass。
 
@@ -93,7 +94,7 @@ npm run build      # 生产构建
 
 - [x] **p1-pbr-ibl** PBR（Cook-Torrance / GGX + Smith + Schlick）+ IBL（split-sum）+ 白炉测试　**核心完成（2026-10-19）**：`gbuffer.frag` 的 `iblDiffuse` / `iblSpecular` 已实现（roughness→LOD + Karis EnvBRDFApprox + 白炉分支）；真实灯光 / CubeCamera 环境贴图 / 白炉开关已接通。2026-10-19 修复了 `tEnvMap` / `uEnvMap` 命名不一致（环境贴图才真正绑定）与漫反射 π 归一化；白炉 HUD 读数实测 **0.978 / -2.2%**，Playwright 已加回归（目标 ±2%，略超，见 DEVLOG）。**2026-10-27 / 10-29 又做了三项算法收口**：`envBRDFApprox` 系数回归 Karis 2013（恢复 `A+B` 结构性约束，DFG 平均绝对误差 0.0317→0.0176）、漫反射改分数 LOD（消除 cube 面块状过渡）、镜面按 `roughness²` 向 N 收拢（压掉掠射错位反射）+ `ENV_SIZE`/`uEnvMaxLod` 单一来源。可选收口：`env` 默认切 `true`、GGX 重要性采样预滤波、±2% 收紧
 - [x] **p1-shadow** 阴影全家桶（SM / PCF / PCSS / CSM + 三种 bias 补偿；VSM 未做）　**主体完成（2026-10-25）**：`ShadowMapPass` 每帧生成 1–4 级 CSM 深度图集（2048² 默认；单级联按投影物包围球收紧），共享 uniform / `ShadowPanel` / 深度图集与 cascade 调试视图 / e2e 已就位。**`gbuffer.frag` 的 `shadowFactor()` 已自写完成**：SM 深度比较、PCF 5×5、PCSS（blocker search + 半影估计）三档，三种 bias（常数 / 法线 / 斜率）可 A/B，级联按 viewDepth 选择；`e2e/shadow.spec.ts` 的 A/B 用例已启用并通过（切阴影产生可见差异）。**未做**：VSM（需额外 moment RT + blur pass）、级联间混合、CSM texel snapping、alpha-tested 投影。
-- [~] **p1-light-ssr** 多光源与剔除（**Clustered 优先**：Forward + Clustered 两档，Deferred 已排除）+ SSR（屏幕空间反射）　**Clustered S1–S3 主体完成（2026-11-06），S4 SSR 未开工**：S1 多光源模型 / S2 cluster grid + 两张数据纹理 / S3-a 参数与面板接线、S3-c 截断告警、S3-d 剔除归因已落地；`?clustered=0&lightCount=N` 可 A/B，性能面板给出平均每 cluster 灯数 / 循环节省 / 剔除 CPU ms，全量 22 passed 守护。**默认值定稿 `lightCount=0`**（全站零回归，见 DEVLOG 2026-11-06）。**已补（2026-11-06）**：8 / 32 / 56 三档 A/B 全过、S3-f `light-ssr` 站点条目（`wip`，默认户外 + 32 盏点光）、跨页复位回归，全量 26 passed。**未做**：S3-b 灯位手调、面板 / 站点文案定稿、满档热力验证、真机 GPU 数据、S4 SSR。拆解见第七章
+- [~] **p1-light-ssr** 多光源与剔除（**Clustered 优先**：Forward + Clustered 两档，Deferred 已排除）+ SSR（屏幕空间反射）　**Clustered S1–S3 主体完成（2026-11-06），S4 SSR 未开工**：S1 多光源模型 / S2 cluster grid + 两张数据纹理 / S3-a 参数与面板接线、S3-c 截断告警、S3-d 剔除归因已落地；`?clustered=0&lightCount=N` 可 A/B，性能面板给出平均每 cluster 灯数 / 循环节省 / 剔除 CPU ms，全量 22 passed 守护。**默认值定稿 `lightCount=0`**（全站零回归，见 DEVLOG 2026-11-06）。**已补（2026-11-06）**：8 / 32 / 56 三档 A/B 全过、S3-f `light-ssr` 站点条目（`wip`，默认户外 + 32 盏点光）、跨页复位回归、满档 60 灯热力不饱和验证，全量 27 passed。**未做**：S3-b 灯位手调、面板 / 站点文案定稿、真机 GPU 数据、S4 SSR。拆解见第七章
 
 ### 阶段 2 · 观感增量
 
@@ -674,7 +675,7 @@ export interface ClusterSnapshot {
 | **S3-e** | `e2e/clustered.spec.ts`：同 URL 同灯数下两种模式截图 A/B（复用 `shadow.spec.ts` 的 `diffStats`），加「关灯阵回归」用例 | A/B 线性域 `meanAbs < 1`、`overRatio < 1%`；噪声基线先测再定阈值 |
 | **S3-f**（建议同时做） | 建 `light-ssr` 站点条目（`src/site/demos.ts`）→ `wip`，limitations 按 7.3.3.6 的风险条目如实填写 | 站点上能看到「多光源 + 剔除」，不再是只有 hdr / pbr-ibl 两个 done |
 
-**进度（2026-11-06 二次更新）**：S3-a / S3-c / S3-d 已落地；默认值定稿 `clustered=true / lightCount=0 / lightSpin=false` 并由像素级用例守护；S3-e 的 8 / 32 / 56 三档 A/B 已通过，S3-f `light-ssr` 站点条目已建（`wip`），跨页复位有回归，全量 26 passed。**仍待做**：S3-b 灯位 / 强度按 Cornell / 户外手调、满档 60 灯 cluster 热力验证、`ClusteredPanel` 与站点条目的文案定稿（本人）、真机 GPU 数据。过程中修掉两个会让 clustered 完全失效的剔除 bug，详见 DEVLOG 2026-11-03。
+**进度（2026-11-06 三次更新）**：S3-a / S3-c / S3-d 已落地；默认值定稿 `clustered=true / lightCount=0 / lightSpin=false` 并由像素级用例守护；S3-e 的 8 / 32 / 56 三档 A/B 与满档 60 灯热力不饱和验证已通过，S3-f `light-ssr` 站点条目已建（`wip`），跨页复位有回归，全量 27 passed。**仍待做**：S3-b 灯位 / 强度按 Cornell / 户外手调、`ClusteredPanel` 与站点条目的文案定稿（本人）、真机 GPU 数据。过程中修掉两个会让 clustered 完全失效的剔除 bug，详见 DEVLOG 2026-11-03。
 
 ##### 7.3.3.4 灯数阶梯与要采集的数据
 
@@ -706,8 +707,8 @@ export interface ClusterSnapshot {
 - [x] 灯数被 `MAX_LIGHTS` 截断时面板显式告警（同时报「请求 N 盏 / 生效 M 盏」与「被截断的 cluster 数」）
 - [x] `?clustered=` / `?lightCount=` 进 URL，A/B 两条链接可直接分享
 - [ ] 灯数阶梯表（8 / 32 / 56）的 **真实 GPU** ms + 压缩比进 README 性能表（采集口径已备，真机数据待采）
-- [ ] cluster 调试视图（tile 叠加 / 灯数热力）在满档（合计 60 盏）下仍有意义（热力不应全屏饱和）
-- [x] `npm run typecheck` / `build` / 全量用例通过（2026-11-06 复跑：**26 passed**，含三档 A/B、站点入口与跨页复位）
+- [x] cluster 调试视图（tile 叠加 / 灯数热力）在满档（合计 60 盏）下仍有意义：热力分母改为本帧单 cluster 峰值自适应，实测显著色阶 2 → 7、顶到纯红 50.9% → 15.6%，并由 e2e 守护（2026-11-06）
+- [x] `npm run typecheck` / `build` / 全量用例通过（2026-11-06 复跑：**27 passed**，含三档 A/B、站点入口、跨页复位与满档热力）
 - [x] 站点 `light-ssr` 条目已上线（`wip`），limitations 如实（CPU 剔除、无逐灯阴影、保守分配、真机数据待采），站点入口有回归用例（2026-11-06）
 
 ##### 7.3.3.6 风险与坑
@@ -740,13 +741,13 @@ export interface ClusterSnapshot {
 ### 7.4 验收清单
 
 - [ ] 多光源在前向管线正确照明（朴素逐灯叠加已实现；点光/聚光**物理衰减**与多灯能量守恒待做）
-- [ ] cluster grid 真实生成，调试视图可切 tile 叠加 / 每 cluster 灯数热力（代码已就位；满档 60 灯下热力是否饱和待目视验证）
+- [x] cluster grid 真实生成，调试视图可切 tile 叠加 / 每 cluster 灯数热力；满档 60 灯下热力不饱和已由 e2e 守护（显著色阶 7 档、顶到纯红 15.6%）
 - [x] Clustered 与暴力前向 A/B 画面一致（8 / 32 / 56 三档均噪声级）；逐片元循环节省以「按 cluster 平均」估计，非严格逐像素，口径已写明
 - [ ] SSR 在金属/光滑表面产生可见反射，关闭时零回归
 - [ ] 所有新增旋钮进 URL（`?clustered=` / `?lightCount=` 已接；`?ssr=` 与步进步数待 S4）
 - [ ] 性能面板逐 pass 归因（cluster 剔除 CPU 归因已有 5Hz 采样块；SSR 一行待 S4）
 - [x] `Pipeline` / passes 目录仍无 React import（2026-11-06 复核：`src/core/postfx` 下 `.ts` 无 react / r3f import）
-- [x] `npm run typecheck` / `npm run build` / `npm run smoke` 通过（2026-11-06：26 passed）
+- [x] `npm run typecheck` / `npm run build` / `npm run smoke` 通过（2026-11-06：27 passed）
 - [x] 站点 demo `status` 改 `wip`，limitations 如实填写（`light-ssr` 条目已上线）
 
 ---

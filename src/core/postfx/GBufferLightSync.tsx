@@ -198,6 +198,8 @@ export function GBufferLightSync() {
       gbufferShared.uClusterDims.value.set(result.gridW, result.gridH, result.zSlices)
       gbufferShared.uViewNear.value = camera.near
       gbufferShared.uViewFar.value = camera.far
+      // 热力分母：本帧单 cluster 峰值（>=1，shader 侧还有 max(...,1) 兜底）
+      gbufferShared.uClusterMaxCount.value = Math.max(1, result.maxLightsPerCluster)
 
       recordClusterFrame({
         enabled: clustered,
@@ -208,8 +210,11 @@ export function GBufferLightSync() {
         avgLightsPerCluster: result.avgLightsPerCluster,
         cullCpuMs,
         truncatedClusters: result.truncatedClusters,
+        maxLightsPerCluster: result.maxLightsPerCluster,
       })
     } else {
+      // 无 cluster 时复位分母，避免切页 / 关灯阵后热力视图沿用上一帧的峰值
+      gbufferShared.uClusterMaxCount.value = 1
       recordClusterFrame({
         enabled: false,
         requestedLights: collectedLights,
@@ -219,6 +224,7 @@ export function GBufferLightSync() {
         avgLightsPerCluster: 0,
         cullCpuMs: 0,
         truncatedClusters: 0,
+        maxLightsPerCluster: 0,
       })
     }
   })

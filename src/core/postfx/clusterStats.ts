@@ -25,6 +25,8 @@ export interface ClusterSnapshot {
   cullCpuMs: number
   /** 单 cluster 灯数被 MAX_LIGHTS 截断的 cluster 数（> 0 会局部漏光） */
   truncatedClusters: number
+  /** 本帧单 cluster 最大灯数：cluster:heat 热力图的归一化分母 */
+  maxLightsPerCluster: number
 }
 
 export const clusterStats: ClusterSnapshot = {
@@ -36,6 +38,7 @@ export const clusterStats: ClusterSnapshot = {
   avgLightsPerCluster: 0,
   cullCpuMs: 0,
   truncatedClusters: 0,
+  maxLightsPerCluster: 0,
 }
 
 /** 每帧调用；`Object.assign` 保持零分配（不要在这里 new 对象） */

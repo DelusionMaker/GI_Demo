@@ -35,6 +35,8 @@ export interface ClusterBuildResult {
   avgLightsPerCluster: number
   /** 单 cluster 灯数被 MAX_LIGHTS 截断的 cluster 数（> 0 表示这些 cluster 会漏光） */
   truncatedClusters: number
+  /** 本帧单 cluster 的最大灯数：cluster:heat 热力图的自适应归一化分母 */
+  maxLightsPerCluster: number
 }
 
 /**
@@ -196,11 +198,14 @@ export function buildClusterLights(opts: {
   // 每 cluster 灯数上限（避免单 cluster 爆炸；同时是 shader 循环上限）
   // 统计截断次数：被截断的 cluster 会漏掉灯（局部变暗），必须让面板能报出来
   let truncatedClusters = 0
+  // 顺手统计峰值：热力图用它做归一化分母，避免满档灯数把色阶压成两档
+  let maxLightsPerCluster = 0
   for (let i = 0; i < totalClusters; i++) {
     if (counts[i] > MAX_LIGHTS) {
       counts[i] = MAX_LIGHTS
       truncatedClusters++
     }
+    if (counts[i] > maxLightsPerCluster) maxLightsPerCluster = counts[i]
   }
 
   // 前缀和 → offset；顺便统计有灯的 cluster 数（性能故事的分子）
@@ -261,5 +266,6 @@ export function buildClusterLights(opts: {
     litClusters,
     avgLightsPerCluster: totalClusters > 0 ? totalIndices / totalClusters : 0,
     truncatedClusters,
+    maxLightsPerCluster,
   }
 }

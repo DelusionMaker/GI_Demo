@@ -187,14 +187,14 @@ MRT 能力探测为了回读把 clearColor 设成 `(0,0,0,0)`，之后只恢复�
 
 | 项目 | 结果 |
 | --- | --- |
-| Playwright | **26 passed** |
+| Playwright | **27 passed** |
 | 白炉中心亮度 | **0.978**（**-2.20%**） |
 | 户外 IBL 关 / 开 亮度均值 | 125.41 / 132.96 |
 | 户外 IBL A/B | 平均差 **8.478**，> 8 像素 **58.89%** |
 | 自建链 vs 直出（Cornell） | 线性域平均差 **≈0.2**，> 8 像素 **≈0.25%** |
 | 阴影 A/B | 平均差 **0.83**，> 8 像素 **0.55%**（噪声 0.00） |
 | Bloom A/B | 平均差 **≈59.89**，> 8 像素 **76.35%** |
-| 构建 | 671 modules；1,382.35 kB / gzip 399.26 kB（`index` / `vendor` / `three` 三 chunk，以 `npm run build` 输出为准） |
+| 构建 | 671 modules；1,383.02 kB / gzip 399.41 kB（`index` / `vendor` / `three` 三 chunk，以 `npm run build` 输出为准） |
 
 白炉测试会等 `data-samples > 0` 再读数，避免用初始默认值 1.000 蒙混过关。用于回归的阈值是 5%，HUD 仍按目标 ±2% 显示。像素级数值取两次复跑的约数（SwiftShader 有帧间噪声）；上述数值来自软件渲染器，**不是性能数据**。
 
@@ -239,7 +239,7 @@ CI 的 headless Chromium 使用 SwiftShader，不能作为性能数据。完整�
 ## 8. 下一步
 
 1. 真机 GPU 性能采样（口径见 README §性能），并如实报告 Clustered 的 CPU 剔除成本。
-2. `light-ssr` 站点条目已上线（`wip`）、32 / 56 灯 A/B 已通过；剩余：灯位 / 强度手调、面板与站点文案定稿、满档 60 灯 cluster 热力验证。
+2. `light-ssr` 站点条目已上线（`wip`）、32 / 56 灯 A/B 与满档 60 灯热力不饱和已通过；剩余：灯位 / 强度手调、面板与站点文案定稿。
 3. SSR：ray march + 调试视图，先复核 MSAA 下 `DepthTexture` 可采样性。
 4. WebGPU 冒烟（验证整条 Pipeline 在 WebGPURenderer 下的可行性），再进 GI 主线：Sponza → 烘焙 + SH 探针 → SSGI → DDGI。
 

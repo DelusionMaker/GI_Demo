@@ -60,7 +60,9 @@ export const gbufferShared = {
   // ── Clustered 剔除（p1-light-ssr S2）：cluster 灯列表数据纹理 + 网格参数 ──
   /** 调试：cluster 可视化（0=关 / 1=tile 叠加 / 2=每 cluster 灯数热力），由 HDRDriver 每帧同步 */
   uClusterDebug: { value: 0 },
-  /** 1 = 启用 Clustered 前向（替换 S1 暴力循环）；0 = 暴力前向（A/B 基线）。默认 0 保证现 demo 无回归；S3 接入 UI 旋钮 / URL 参数做 A/B 时改为可切换、默认 1 */
+  /** 本帧单 cluster 最大灯数：热力图的归一化分母（GBufferLightSync 每帧填充；1 = 无 cluster） */
+  uClusterMaxCount: { value: 1 },
+  /** 1 = 启用 Clustered 前向（替换 S1 暴力循环）；0 = 暴力前向（A/B 基线）。由 ClusterSync 按 `clustered && lightCount > 0` 每帧单向同步 */
   uClustered: { value: 1 },
   /** cluster 网格尺寸：x=gridW, y=gridH, z=zSlices（GBufferLightSync 每帧填充） */
   uClusterDims: { value: new THREE.Vector3(1, 1, 1) },

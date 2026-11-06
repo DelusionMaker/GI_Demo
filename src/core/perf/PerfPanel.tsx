@@ -101,6 +101,10 @@ export const PerfPanel = observer(function PerfPanel() {
                 <span className="perf-val-sm">{cluster.avgLightsPerCluster.toFixed(2)} 盏</span>
               </div>
               <div className="perf-pass-row">
+                <span className="perf-key">每 cluster 峰值</span>
+                <span className="perf-val-sm">{cluster.maxLightsPerCluster} 盏（热力分母）</span>
+              </div>
+              <div className="perf-pass-row">
                 <span className="perf-key">循环节省</span>
                 <span className="perf-val-sm">
                   {savedRatio === null ? '—' : `${(savedRatio * 100).toFixed(1)}%`}

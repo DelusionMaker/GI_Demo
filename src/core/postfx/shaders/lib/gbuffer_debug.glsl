@@ -47,8 +47,12 @@ bool applyGbufferDebug(vec3 N, vec3 worldPos) {
       vec3 base = vec3(0.02, 0.02, 0.03);
       gAlbedo = vec4(mix(base, vec3(0.98, 0.60, 0.20), clamp(border, 0.0, 1.0)), 1.0);
     } else {
-      // 热力：灯数映射到蓝→红
-      float t = clamp(float(count) / 16.0, 0.0, 1.0);
+      // 热力：灯数映射到蓝→红，分母取本帧单 cluster 峰值（uClusterMaxCount）。
+      // 固定 /16 在满档 60 盏下会让过半像素 clamp 到纯红，热力退化成两档色块
+      // （2026-11-06 实测纯红 51%、显著色阶仅 2 档）。相对峰值线性归一化语义直观：
+      // 「这个 cluster 装了本帧峰值的百分之几」，且峰值只在少数 cluster 出现。
+      float denom = max(uClusterMaxCount, 1.0);
+      float t = clamp(float(count) / denom, 0.0, 1.0);
       vec3 cool = vec3(0.10, 0.30, 0.90);
       vec3 hot = vec3(0.95, 0.20, 0.15);
       gAlbedo = vec4(mix(cool, hot, t), 1.0);

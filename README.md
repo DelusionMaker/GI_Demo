@@ -34,7 +34,7 @@
 - **演示模式**：默认隐藏调试 HUD；技术模式恢复 HDR 链路、性能面板、G-buffer 调试。
 - **HDR 后处理**：RGBA16F → 自动曝光 / 直方图 / ACES / AgX / Bloom；旁路 A/B 与逐 pass 计时。
 - **站点条目**：`/d/light-ssr` 独立展示多光源与 Clustered 剔除（默认户外 + 32 盏点光 + 技术模式），元数据含问题陈述、公式、局限与参考；`?clustered=0` 即暴力前向对照组。
-- **自动化验证**：26 个 Playwright 用例覆盖 HDR / G-buffer / 白炉 / 户外 IBL / 阴影 / Clustered 三档 A/B / 演示模式 / 站点入口 / 默认零回归与跨页复位。
+- **自动化验证**：27 个 Playwright 用例覆盖 HDR / G-buffer / 白炉 / 户外 IBL / 阴影 / Clustered 三档 A/B / 满档热力不饱和 / 演示模式 / 站点入口 / 默认零回归与跨页复位。
 
 ## 渲染链路
 
@@ -62,7 +62,7 @@ canvas（sRGB）
 
 | 项目 | 结果 |
 | --- | --- |
-| Playwright | **26 passed** |
+| Playwright | **27 passed** |
 | 白炉中心亮度 | **0.978**（**-2.20%**，目标 ±2%，略超） |
 | 白炉全帧几何均值 | HUD 实时显示（含天空 / 暗部，不是 ±% 判据） |
 | 户外 IBL 关 / 开 亮度均值 | 125.41 / 132.96 |
@@ -70,7 +70,7 @@ canvas（sRGB）
 | 自建链 vs 直出（Cornell） | 线性域平均差 **≈0.2**，> 8 像素 **≈0.25%** |
 | 阴影 A/B | 平均差 **0.83**，> 8 像素 **0.55%**（确定性噪声 0.00） |
 | Bloom A/B | 平均差 **≈59.89**，> 8 像素 **76.35%** |
-| 构建 | 671 modules；合计 1,382.35 kB / gzip 399.26 kB（`index` 115.83 / `vendor` 572.64 / `three` 693.88 kB；后两者仍有 >500 kB 体积告警，以 `npm run build` 输出为准） |
+| 构建 | 671 modules；合计 1,383.02 kB / gzip 399.41 kB（`index` 116.50 / `vendor` 572.64 / `three` 693.88 kB；后两者仍有 >500 kB 体积告警，以 `npm run build` 输出为准） |
 
 这些是**回归指标**，不是画质评分；白炉读数会随材质的 roughness 变化，HUD 会显示当前粗糙度。像素级 A/B 在 SwiftShader 下有帧间噪声，上表为多次复跑的代表值（取约数）。以上均为软件渲染器数据，只用于守护回归，不是性能数据。
 
@@ -145,10 +145,9 @@ docs/images/            README 用截图
 
 1. **真实 GPU 性能采样（需本人）**：按上表口径补齐设备 / 分辨率 / DPR / 浏览器与逐 pass GPU ms；SwiftShader 数据不可引用。
 2. **作品集内容定稿（需本人）**：`ClusteredPanel` 与 `light-ssr` 条目的问题陈述 / 文案、`LightRig` 灯位与强度按场景手调、真实 GPU 目视复核、封面 GIF / hero 截图、LICENSE 选择。
-3. **S3-e 收尾**：满档 60 灯下 `cluster:heat` 热力不饱和验证。
-4. **SSR**：屏幕空间反射接入自建 pass 链，先复核 MSAA 下 `DepthTexture` 可采样性。
-5. **WebGPU 冒烟**：在阶段 4 前验证 `WebGPURenderer` 能否承载现有 `Pipeline`（MRT / GPU 计时的等价物）。
-6. **GI 主线**：Sponza 室内 → 烘焙 lightmap + SH 探针（probe 层按 DDGI 可复用设计）→ SSGI → DDGI；到那一步才把「GI」作为主标题。
+3. **SSR**：屏幕空间反射接入自建 pass 链，先复核 MSAA 下 `DepthTexture` 可采样性。
+4. **WebGPU 冒烟**：在阶段 4 前验证 `WebGPURenderer` 能否承载现有 `Pipeline`（MRT / GPU 计时的等价物）。
+5. **GI 主线**：Sponza 室内 → 烘焙 lightmap + SH 探针（probe 层按 DDGI 可复用设计）→ SSGI → DDGI；到那一步才把「GI」作为主标题。
 
 ## Case study
 

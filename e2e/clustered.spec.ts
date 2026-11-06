@@ -8,12 +8,13 @@ import { PNG } from 'pngjs'
  * - 默认进入不产生脏参数，且默认画面与「显式 0 盏」逐像素一致
  *   （lightCount 默认 0 → 灯阵不挂载、不构建 cluster，现有页面零回归）；
  * - `?clustered=&lightCount=` 能回填到面板、面板操作会写回 URL；
- * - 灯阵参与照明、剔除归因有读数、clustered 与暴力前向画面一致。
+ * - 灯阵参与照明、剔除归因有读数、8 / 32 / 56 三档 A/B 一致；
+ * - 满档 60 灯 cluster:heat 热力不饱和；light-ssr 站点入口与跨页复位。
  *
  * 注意：断言里的默认值（clustered=true / lightCount=0）与 `clusterParams.ts` 的
  * CLUSTER_PARAM_DEFAULTS 一致；改默认值会破坏分享链接语义，必须同步改这里。
  *
- * 未覆盖：32 / 56 盏的 A/B 一致性与满档 cluster 热力视图（S3-e 剩余项）。
+ * 未覆盖：S3-b 灯位手调、真机 GPU 数据与 SSR（S4）。
  */
 
 const PANEL = '.panel:has-text("多光源")'
@@ -241,4 +242,75 @@ test('站内切页后不残留灯阵（clusterParams 单例复位）', async ({ 
   // 可直接读 select 判断 lightCount 是否复位。
   await expect(page.locator(PANEL).locator('select')).toHaveValue('0')
   await expect(page.locator('.perf-cluster')).not.toContainText('已启用')
+})
+
+/** 热力色阶分布：R−B 是蓝→红映射的一维投影，用来判断有没有「全屏一片红」。 */
+function heatStats(png: PNG) {
+  const bins = new Array<number>(17).fill(0)
+  let hot = 0
+  let cool = 0
+  let clamped = 0
+  let sum = 0
+  let sumSq = 0
+  const px = png.width * png.height
+  for (let i = 0; i < png.data.length; i += 4) {
+    const d = png.data[i] - png.data[i + 2]
+    sum += d
+    sumSq += d * d
+    if (d > 60) hot += 1
+    if (d < -60) cool += 1
+    if (d >= 127) clamped += 1
+    const bin = Math.min(16, Math.max(0, Math.floor((d + 128) / 16)))
+    bins[bin] += 1
+  }
+  const mean = sum / px
+  return {
+    mean,
+    std: Math.sqrt(Math.max(0, sumSq / px - mean * mean)),
+    hotRatio: hot / px,
+    coolRatio: cool / px,
+    clampRatio: clamped / px,
+    activeBins: bins.filter((n) => n / px > 0.01).length,
+    bins: bins.map((n) => Number((n / px).toFixed(3))),
+  }
+}
+
+/**
+ * 满档 60 灯（56 点光 + 场景固定 4 盏）下 cluster:heat 仍要有信息量。
+ *
+ * 修复前分母固定 `count / 16`：2026-11-06 实测只有 2 个显著色阶、51% 像素顶到纯红，
+ * 热力退化成两档色块。现在分母 = 本帧单 cluster 峰值（perf 面板可见），线性归一化。
+ *
+ * 阈值按实测留余量，三面守护：色阶数、顶到上限的比例、以及「切回完整链路后画面确实变了」。
+ * `coolRatio` 不设下界：2 盏平行光覆盖全部 cluster，本场景最小 count 也有 8 盏，
+ * 冷色端本来就不出现，那是场景事实而不是饱和。
+ */
+test('满档 60 灯 cluster:heat 热力不饱和且有梯度', async ({ page }) => {
+  const errors = collectErrors(page)
+  await page.goto(
+    '/d/hello-cube?presentation=0&speed=0&scene=cornell&clustered=1&lightCount=56&hdrDebug=cluster:heat',
+  )
+  await expect(page.locator('canvas').first()).toBeVisible({ timeout: 20_000 })
+  // 分母必须真的从本帧统计里来，且面板可见（评审会问「热力按什么归一化」）
+  await expect(page.locator('.perf-pass-row:has-text("每 cluster 峰值")')).toContainText('盏', {
+    timeout: 20_000,
+  })
+  await page.waitForTimeout(1800)
+
+  const heat = await shootCanvas(page)
+  const stats = heatStats(heat)
+  const summary = JSON.stringify(stats)
+  expect(stats.activeBins, `显著色阶数不足：${summary}`).toBeGreaterThanOrEqual(5)
+  expect(stats.clampRatio, `顶到纯红的像素过多：${summary}`).toBeLessThan(0.3)
+  expect(stats.hotRatio, `偏红像素过多：${summary}`).toBeLessThan(0.45)
+
+  // 同一次加载内切回完整链路：两次 goto 的相机飞入插值会污染 A/B。
+  // 若 uClusterDebug 没生效（画面还是普通着色），这里会立刻失败。
+  const debugSelect = page.locator('select:has(option[value="cluster:heat"])')
+  await debugSelect.selectOption('none')
+  await page.waitForTimeout(600)
+  const diff = diffStats(heat, await shootCanvas(page))
+  expect(diff.meanAbs, `热力 vs 完整链路平均差 ${diff.meanAbs.toFixed(3)}`).toBeGreaterThan(20)
+
+  expect(errors, `控制台错误：\n${errors.join('\n')}`).toEqual([])
 })

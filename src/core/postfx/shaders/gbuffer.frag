@@ -68,6 +68,7 @@ uniform vec4 uLightData3[64];     // x = cosOuter（聚光外角），yzw 预留
 
 // ── Clustered（p1-light-ssr S2）──
 uniform int uClusterDebug;          // 0=关 / 1=tile 叠加 / 2=每 cluster 灯数热力
+uniform float uClusterMaxCount;     // 热力分母：本帧单 cluster 最大灯数（自适应，避免满档饱和）
 uniform int uClustered;             // 1 = 启用 Clustered 前向（替换暴力循环）
 uniform vec3 uClusterDims;          // x=gridW, y=gridH, z=zSlices
 uniform float uViewNear;

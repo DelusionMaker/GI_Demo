@@ -198,7 +198,7 @@ export const DEMOS: DemoMeta[] = [
       '灯表：4 个 vec4[64] SoA uniform 数组存位置 / range、颜色 / 类型、方向 / 锥角，MAX_LIGHTS=64（含场景固定的 4 盏）。',
       'CPU 剔除：16×16 像素 tile × 24 个对数深度切片（近密远疏），按灯的有限 range 做保守范围分配，每帧重建。',
       '两张 RGBA32F 数据纹理承载 per-cluster (offset, count) 与扁平灯号索引；gbuffer.frag 用 texelFetch 取本 cluster 灯列表，与暴力前向共用同一个 lightContribution()。',
-      '中间量：hdrDebug=cluster:tiles 看 tile 叠加，cluster:heat 看每 cluster 灯数热力；性能面板 5Hz 采样 activeLights / 平均每 cluster 灯数 / 循环节省 / cullCpuMs，灯数被截断时显式告警。',
+      '中间量：hdrDebug=cluster:tiles 看 tile 叠加，cluster:heat 看每 cluster 灯数热力（按本帧单 cluster 峰值线性归一化；固定分母在满档 60 盏会饱和成两档色块）；性能面板 5Hz 采样 activeLights / 平均每 cluster 灯数 / 峰值 / 循环节省 / cullCpuMs，灯数被截断时显式告警。',
       'A/B：?clustered=0 切到暴力前向；灯数离散档位 0 / 8 / 32 / 56，链接可直接分享复现。',
     ],
     formulas: [
