@@ -10,6 +10,52 @@
 
 ---
 
+## 2026-11-06 · 批次 1 可信度收口：默认值定稿 + 产物拆包 + 展示层追平
+
+### 目标
+
+把「代码已经做了、但评审看不到 / 不敢信」的部分补齐：Clustered 默认值语义、回归数据、对外文档与站点元数据、构建产物拆分。**本轮不新增任何渲染算法**；真机 GPU 性能数据本环境无法产生，只落地采集口径，不填假数字。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/postfx/clusterParams.ts` | 改造 | `lightCount` 默认值定稿 `0`（用户改动），TODO 注释改为定稿说明与三条理由 |
+| `e2e/clustered.spec.ts` | 改造 | 默认用例补「面板 select=0 / 归因未启用」断言；新增「默认画面与显式零灯阵一致」像素级用例 |
+| `vite.config.ts` | 改造 | `manualChunks` 拆出 `three` / `vendor` 两个 chunk |
+| `README.md` / `CASE_STUDY.md` | 改造 | 状态边界、已实现清单、验证数据、性能采集口径与局限、下一步，全部追平到当前 HEAD |
+| `src/site/demos.ts` | 改造 | `deep-gi` 由「四选一」改为已锁定 DDGI；两条过时的「单主光」limitations 订正 |
+| `TODO.md` | 改造 | 进度快照、构建体积、S3 进度与验收清单对齐 |
+
+### 关键决策
+
+1. **`lightCount` 默认 0**：`clusterParams` 是全站单例，非 0 会让 hdr / pbr-ibl / shadows 一进来就挂 12 盏灯，hero 截图、白炉 / IBL 基线全部漂移。多光源只在显式 `?lightCount=` 链接或后续 `light-ssr` 页面出现。
+2. **默认值要有像素级守护，不能只断言 URL**：此前 21 个用例全绿，仍没发现默认值是 8 —— URL 无脏键与「画面零回归」是两件事。新增用例在同一次加载内切 8 → 0，比较首尾两帧。
+3. **性能数据宁可留白也不填 SwiftShader**：README / CASE_STUDY 的性能表改成「采集口径 + 待真机填写」模板，并单列首轮 SwiftShader 阶梯数据为「仅趋势、不可引用」。
+4. **如实写出 Clustered 的成本侧**：60 盏灯时省下 GPU 逐片元循环，代价是每帧 2–6 ms JS 剔除，快显卡上可能反超收益；这是阶段 4 迁 compute 的论据，不能只报 87.6%。
+5. **`manualChunks` 只拆 three / vendor，不做 demo 级 code-split**：本轮目标是消除单包，不引入动态 import 的加载时序风险。
+
+### 踩坑与修复
+
+1. **默认值口径矛盾**：代码曾是 8，而 `ClusterSync.tsx` / `e2e` 注释 / DEVLOG / TODO 都按「默认 0」写。全量用例仍 21 passed，因为断言只查 URL。已由用户改回 0，并把语义写进注释与用例。
+2. **拆包后仍有 >500 kB 警告**：`three` 693.88 kB、`vendor` 572.64 kB（未压缩）仍超阈值，属预期；继续拆需要按 demo 动态 import，留到 eng-shared。README 如实记录。
+
+### 验证（2026-11-06 复跑）
+
+- `npm run build`：通过。671 modules；`index` 111.80 kB（gzip 39.78）/ `vendor` 572.64 kB（gzip 177.75）/ `three` 693.88 kB（gzip 179.91），合计 1,378.32 kB / gzip 397.44 kB。
+- `npx playwright test`：**22 passed**（新增默认值语义用例 1 条；既有 HDR / G-Buffer / 阴影 / 户外 / Clustered / 演示模式无回归）。
+- 回归数值：白炉 0.978 / -2.20%；户外 IBL 关 / 开 125.41 / 132.96，A/B 8.478 / 58.89%；阴影 A/B 0.83 / 0.55%（噪声 0.00）；自建链 vs 直出 0.187 / 0.247%；Bloom A/B 59.885 / 76.35%。
+- 展示层改动后二次复跑同为 **22 passed**；自建链 0.190 / 0.254%、Bloom 59.886 / 76.35%，属 SwiftShader 帧间噪声，阈值未受影响。因此 README / CASE_STUDY 的像素级数值写成约数，避免文档反复腐烂。
+
+### 遗留 / 下一步
+
+1. **真机 GPU 性能采样**：本环境只有 headless SwiftShader，性能表仍是待填；需按 README 口径在真实 GPU 上采并注明设备 / 分辨率 / DPR / 浏览器。
+2. **LICENSE 未补**：代码许可证需本人选择（MIT / Apache-2.0 / 保留所有权利），不代为决定；第三方资产许可见 `public/assets/CREDITS.md`。
+3. **批次 2**：`light-ssr` 站点条目、S3-b 灯位手调与 32/56 灯 A/B、ClusteredPanel 文案、SSR。
+4. **阶段 4 前**：WebGPU 冒烟需验证 `WebGPURenderer` 能否跑现有 `Pipeline`（MRT / GPU 计时的等价物），不只是 `navigator.gpu` 是否存在。
+
+---
+
 ## 2026-11-03 · p1-light-ssr S3-c/S3-d：截断告警 + 剔除归因（含首轮阶梯数据）
 
 ### 目标

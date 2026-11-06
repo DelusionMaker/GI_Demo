@@ -22,6 +22,17 @@ export default defineConfig({
   build: {
     target: 'es2022',
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        // 原单包 1.38 MB 里 three 占大头；拆出后应用代码与依赖可分别缓存。
+        // Windows 下模块 id 可能含反斜杠，先归一化再匹配。
+        manualChunks(id) {
+          const path = id.replace(/\\/g, '/')
+          if (path.includes('/node_modules/three/')) return 'three'
+          if (path.includes('/node_modules/')) return 'vendor'
+        },
+      },
+    },
   },
   server: {
     port: 5173,

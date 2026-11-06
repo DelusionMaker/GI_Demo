@@ -17,7 +17,7 @@
 3. **真实资产必须进同一条管线**：LittlestTokyo 带 Draco、蒙皮、baseColor 贴图、BLEND 玻璃；不能为了跑通而退回内建材质。
 4. **状态必须可复现**：曝光、曲线、场景、IBL、白炉、演示模式全部进 URL query。
 
-当前范围是 **直接光 + IBL**，不是完整 GI。阴影、SSR、SSGI、Sponza 室内在 roadmap 中，文中会明确标注。
+当前范围是 **直接光 + IBL + CSM 阴影 + Forward-Clustered 多光源**，不是完整 GI。SSR、GTAO / SSGI、烘焙 lightmap + SH 探针、DDGI、Sponza 室内在 roadmap 中，文中会明确标注。
 
 ---
 
@@ -47,7 +47,7 @@ canvas（sRGB）
 
 ### 3.1 前向 + MRT，而不是现在就做延迟
 
-当前 `gAlbedo` 直接写 **最终 PBR 着色**，`gNormal` / `gMRAO` 预留给后续 SSR / SSGI / 阴影。这样：
+当前 `gAlbedo` 直接写 **最终 PBR 着色**，`gNormal` / `gMRAO` 与 depth 供调试视图、cluster 热力，以及后续 SSR / SSGI 使用（阴影走独立的 CSM 深度图集，不读这些附件）。这样：
 
 - 直接光 / IBL 的调试链路最短，改 BRDF 不需要同时维护延迟光照 pass；
 - 仍然验证了 MRT 写入、附件格式、三附件 resolve 和调试视图；
@@ -183,16 +183,20 @@ MRT 能力探测为了回读把 clearColor 设成 `(0,0,0,0)`，之后只恢复�
 
 ## 5. 验证
 
+2026-11-06 全量复跑（headless Chromium / SwiftShader，仅用于回归守护）：
+
 | 项目 | 结果 |
 | --- | --- |
-| Playwright | **11 passed** |
+| Playwright | **22 passed** |
 | 白炉中心亮度 | **0.978**（**-2.20%**） |
-| 户外 IBL 关 / 开 亮度均值 | 123.76 / 134.78 |
-| 户外 IBL A/B | 平均差 **12.166**，> 8 像素 **≈59.03%** |
-| 自建链 vs 直出（Cornell） | 线性域平均差 **≈0.25**，> 8 像素 **≈0.25%** |
-| 构建 | 658 modules；1,346.45 kB / gzip 388.13 kB |
+| 户外 IBL 关 / 开 亮度均值 | 125.41 / 132.96 |
+| 户外 IBL A/B | 平均差 **8.478**，> 8 像素 **58.89%** |
+| 自建链 vs 直出（Cornell） | 线性域平均差 **≈0.19**，> 8 像素 **≈0.25%** |
+| 阴影 A/B | 平均差 **0.83**，> 8 像素 **0.55%**（噪声 0.00） |
+| Bloom A/B | 平均差 **≈59.89**，> 8 像素 **76.35%** |
+| 构建 | 671 modules；1,378.32 kB / gzip 397.44 kB（`index` / `vendor` / `three` 三 chunk） |
 
-白炉测试会等 `data-samples > 0` 再读数，避免用初始默认值 1.000 蒙混过关。用于回归的阈值是 5%，HUD 仍按目标 ±2% 显示。
+白炉测试会等 `data-samples > 0` 再读数，避免用初始默认值 1.000 蒙混过关。用于回归的阈值是 5%，HUD 仍按目标 ±2% 显示。像素级数值取两次复跑的约数（SwiftShader 有帧间噪声）；上述数值来自软件渲染器，**不是性能数据**。
 
 Cornell 参考图：
 
@@ -200,39 +204,44 @@ Cornell 参考图：
 
 ---
 
-## 6. 性能（待补）
+## 6. 性能（真机数据待采）
 
-CI 的 headless Chromium 使用 SwiftShader，不能作为性能数据。需要在真实 GPU 上补：
+CI 的 headless Chromium 使用 SwiftShader，不能作为性能数据。完整采集口径与待采矩阵见 [README.md](README.md#性能)，这里只记要点与结论：
 
 | 场景 | 分辨率 / DPR | Draw calls | 三角形 | GPU 总 ms | 备注 |
 | --- | --- | --- | --- | --- | --- |
-| Cornell | 待填 | 待填 | 待填 | 待填 | 8 个参考 mesh + 探针 |
-| 户外 | 待填 | 约 79 | 约 171k | 待填 | IBL 开 / 关各一组 |
-| Bloom / 后处理 | 待填 | — | — | 待填 | 开 / 关各一组 |
+| Cornell（基线） | 待真机 | 待真机 | 待真机 | 待真机 | 8 个参考 mesh + 探针 |
+| 户外 · IBL 关 / 开 | 待真机 | 约 79 | 约 171k | 待真机 | 只改 `env` |
+| Bloom / DPR 阶梯 / 阴影级联 / Clustered 灯数阶梯 | 待真机 | — | — | 待真机 | 见 README 完整表 |
 
-采集方法：`?presentation=0` 打开技术模式，读 PerfPanel 的 GPU 计时（需要 `EXT_disjoint_timer_query_webgl2`），每项 3 次取中位数；同时记录首屏加载时间与资产体积（约 6.5 MB）。
+固定 `?presentation=0&speed=0`，记录设备 / 浏览器 / 分辨率 / DPR，每组 3 次取中位数；读 PerfPanel 逐 pass GPU ms（需 `EXT_disjoint_timer_query_webgl2`），计时扩展不可用时降级为帧时间中位数并注明局限。
+
+**已有的 SwiftShader 阶梯数据只能看趋势**：60 盏灯时平均每 cluster 7.45 盏、循环节省 87.6%，但每帧要 2–6 ms 做 JS 剔除。快显卡上 CPU 侧很可能反超 GPU 收益 —— 这是阶段 4 迁 compute 的论据，不能只报节省比例。真机数据出来后，必须把成本侧一起写进 limitations。
 
 ---
 
 ## 7. 已知局限
 
 - 环境预滤波是 CubeCamera 的 box-filter mip 链，不是 GGX 重要性采样；掠射角近似较差。
-- 单次散射 GGX 在粗糙端损失多次散射能量，白炉 -2.2%。
+- 单次散射 GGX 在粗糙端损失多次散射能量，白炉 -2.2%（目标 ±2%，略超）。
 - BLEND 玻璃在 MRT 下按不透明处理（alphaTest 0.1），没有硬件混合 / 折射。
 - 动画未播放；当前是 bind pose。
 - 天空是静态 1K HDR，没有大气散射 / 雾；地面是纯色平面。
 - HDR cube 需要 `EXT_color_buffer_float`；不支持时 IBL 回退 RoomEnvironment，天空仍保留 equirect HDR。
-- 当前只有单主平行光 + IBL，不是完整 GI；Cornell 顶灯仍是几何占位。
+- 阴影：级联间硬切、未做 texel snapping / VSM / alphaTest 投影；阴影只压暗直接光。
+- 多光源：Forward-Clustered 非 Deferred，CPU 剔除在快显卡上可能反超 GPU 收益；点光 / 聚光无逐灯阴影，物理单位换算与多灯能量守恒未做。默认 `lightCount=0` 不挂灯阵。
+- 当前不是完整 GI；Cornell 顶灯仍是几何占位。SSR、GTAO / SSGI、烘焙探针、DDGI 未开工。
 - 室内 Sponza 未接入；演示下拉暂时隐藏「室内」。
+- 真实 GPU 性能数据待采；现有逐 pass 计时只在支持 `EXT_disjoint_timer_query_webgl2` 的设备可用。
 
 ---
 
 ## 8. 下一步
 
-1. Sponza：normal / metallicRoughness / emissive / 透明混合 + KTX2，控制资产预算。
-2. `p1-shadow` / `p1-light-ssr`：面光源、软阴影、多光源剔除、SSR。
-3. 真实 GPU 性能表；再评估是否需要 GGX 重要性采样预滤波。
-4. SSGI / 探针 / 烘焙，逐步把「GI」从 roadmap 变成主标题。
+1. 真机 GPU 性能采样（口径见 README §性能），并如实报告 Clustered 的 CPU 剔除成本。
+2. `light-ssr` 站点条目 + S3 收口（灯位、32 / 56 灯 A/B、面板文案）。
+3. SSR：ray march + 调试视图，先复核 MSAA 下 `DepthTexture` 可采样性。
+4. WebGPU 冒烟（验证整条 Pipeline 在 WebGPURenderer 下的可行性），再进 GI 主线：Sponza → 烘焙 + SH 探针 → SSGI → DDGI。
 
 ---
 

@@ -6,23 +6,24 @@
 
 ---
 
-## 〇、进度快照（2026-11-03，HEAD `5e57906`）
+## 〇、进度快照（2026-11-06；基线 HEAD `69701ac`，工作区含未提交改动）
 
 | 层 | 状态 | 说明 |
 | --- | --- | --- |
 | 阶段 0 · 底座 | 基本完成 | p0-base 骨架 / p0-hdr / p0-gbuffer-hud 完成；p0-assets 2/3（缺 Sponza 室内） |
-| 阶段 1 · 直接光照 | 主体完成 | p1-pbr-ibl 完成；p1-shadow 主体完成（缺级联混合 / VSM / texel snapping）；**p1-light-ssr 仅 S1/S2 骨架** |
+| 阶段 1 · 直接光照 | 主体完成 | p1-pbr-ibl 完成；p1-shadow 主体完成（缺级联混合 / VSM / texel snapping）；**p1-light-ssr：Clustered S3-a/c/d 完成，S3-b/S3-e 收尾与 S4 SSR 未做** |
 | 阶段 2–5 | 未开始 | GTAO / VFX / 烘焙 / SSGI / DDGI / 收尾 |
 
-站点展示：7 条 demo 中 `done` 2 条（hdr、pbr-ibl）、`wip` 2 条（hello-cube、shadows）、`planned` 3 条（bake-gi、ssgi、deep-gi）；`p1-light-ssr` 尚无独立站点条目。
+站点展示：7 条 demo 中 `done` 2 条（hdr、pbr-ibl）、`wip` 2 条（hello-cube、shadows）、`planned` 3 条（bake-gi、ssgi、deep-gi，已锁定 DDGI）；`p1-light-ssr` 尚无独立站点条目。
 
-**三处展示层缺口（优先于新功能）**：
+**展示层缺口（2026-11-06 复核）**：
 
-1. **性能故事为空**：`README.md` 性能表整列「待填」。GPU 逐 pass 计时早已接好，但从未在真实 GPU 上采样 —— 这是「三条筛选标准」第 3 条的唯一证据。
-2. **WebGPU 未实测**：阶段 4 锁定 DDGI 且依赖 `three/webgpu`，至今零验证，是整条深水区的单点风险，验证成本却很低。
-3. **多光源 / SSR 不可见**：clustered 已有实现但无 UI、无 A/B，SSR 未开工，站点上没有任何对应页面。
+1. **性能故事仍为空（唯一未解）**：README / CASE_STUDY 的性能表已改成「采集口径 + 待真机填写」模板，但逐 pass GPU 计时从未在真实 GPU 上采样 —— 筛选标准第 3 条的唯一证据。
+2. ~~对外文档数值腐烂~~ **已修**：README / CASE_STUDY 追平到 22 passed / 671 modules / IBL A/B 8.478 等当前数据；站点 `deep-gi` 已改为 DDGI 锁定。
+3. ~~默认值口径矛盾~~ **已修**：`lightCount` 定稿 0，e2e 增加像素级零回归守护（见 DEVLOG 2026-11-06）。
+4. **仍缺**：多光源 / SSR 无站点页面；WebGPU 零实测 —— `capabilities.detect` 与 `Pipeline` 依赖 WebGL2，`three/webgpu` 单点分叉假设未验证；代码未附 LICENSE。
 
-**建议推进顺序（不绑定日期）**：真实 GPU 性能采样 → light-ssr S3（clustered A/B + 剔除耗时归因）→ Sponza 室内 → SSR → 烘焙 / GI 主线 → 阶段 4 开工前先做 WebGPU 冒烟。
+**建议推进顺序（不绑定日期）**：真机 GPU 性能采样 → `light-ssr` 站点条目 + S3-b/S3-e 收口 → SSR → WebGPU 冒烟（验证整条 Pipeline，不只是 `navigator.gpu`）→ Sponza 室内（与烘焙一并做）→ 烘焙 / GI 主线（probe 层按 DDGI 可复用设计）→ DDGI → 收尾。
 
 ---
 
@@ -47,7 +48,7 @@
 
 - **与手册建议的偏差**：手册 3.5 建议「复杂多 pass 页用 vanilla three」。本项目按用户要求统一走 R3F。缓解方式：渲染核心保持与 React 无关的 module/class，React 只负责挂载与 UI，避免 reconciler 与自建多 pass 管线互相打架。**该缓解方案在 p0-hdr 落地时正式执行，见「三」的方案 A。**
 - **`onBeforeCompile` 脆弱**：依赖 three 内部 chunk 命名，必须锁 three 版本、集中管理注入点、加冒烟测试（手册 3.7）。
-- **构建体积**：当前产物 **1.38 MB（gzip 397 kB，含 MobX；2026-11-03 构建，665 modules）**。后续用 `manualChunks` 拆出 three，并按需对 demo 做 code-split。
+- **构建体积**：2026-11-06 起 `manualChunks` 已拆出 three / vendor：671 modules，合计 **1,378.32 kB（gzip 397.44 kB）** = `index` 111.80 + `vendor` 572.64 + `three` 693.88 kB。`three` / `vendor` 仍触发 >500 kB 告警，进一步拆分需按 demo 动态 import（推迟到 eng-shared）。
 - **MobX 7 是新主版本**：注解值必须是 `Annotation` 对象（v6 允许的 `"action.bound"` 字符串写法已失效），绑定动作改用 `actionBound`。新增 store 时不要照抄 v6 示例。
 - **性能归因**：不要只看 `renderer.info`（不含 GPU 时间），需接 `EXT_disjoint_timer_query_webgl2` / WebGPU timestamp-query 自己测每个 pass。
 
@@ -91,7 +92,7 @@ npm run build      # 生产构建
 
 - [x] **p1-pbr-ibl** PBR（Cook-Torrance / GGX + Smith + Schlick）+ IBL（split-sum）+ 白炉测试　**核心完成（2026-10-19）**：`gbuffer.frag` 的 `iblDiffuse` / `iblSpecular` 已实现（roughness→LOD + Karis EnvBRDFApprox + 白炉分支）；真实灯光 / CubeCamera 环境贴图 / 白炉开关已接通。2026-10-19 修复了 `tEnvMap` / `uEnvMap` 命名不一致（环境贴图才真正绑定）与漫反射 π 归一化；白炉 HUD 读数实测 **0.978 / -2.2%**，Playwright 已加回归（目标 ±2%，略超，见 DEVLOG）。**2026-10-27 / 10-29 又做了三项算法收口**：`envBRDFApprox` 系数回归 Karis 2013（恢复 `A+B` 结构性约束，DFG 平均绝对误差 0.0317→0.0176）、漫反射改分数 LOD（消除 cube 面块状过渡）、镜面按 `roughness²` 向 N 收拢（压掉掠射错位反射）+ `ENV_SIZE`/`uEnvMaxLod` 单一来源。可选收口：`env` 默认切 `true`、GGX 重要性采样预滤波、±2% 收紧
 - [x] **p1-shadow** 阴影全家桶（SM / PCF / PCSS / CSM + 三种 bias 补偿；VSM 未做）　**主体完成（2026-10-25）**：`ShadowMapPass` 每帧生成 1–4 级 CSM 深度图集（2048² 默认；单级联按投影物包围球收紧），共享 uniform / `ShadowPanel` / 深度图集与 cascade 调试视图 / e2e 已就位。**`gbuffer.frag` 的 `shadowFactor()` 已自写完成**：SM 深度比较、PCF 5×5、PCSS（blocker search + 半影估计）三档，三种 bias（常数 / 法线 / 斜率）可 A/B，级联按 viewDepth 选择；`e2e/shadow.spec.ts` 的 A/B 用例已启用并通过（切阴影产生可见差异）。**未做**：VSM（需额外 moment RT + blur pass）、级联间混合、CSM texel snapping、alpha-tested 投影。
-- [~] **p1-light-ssr** 多光源与剔除（**Clustered 优先**：Forward + Clustered 两档，Deferred 已排除）+ SSR（屏幕空间反射）　**S1/S2 骨架已落地（2026-10-26，10-27 修复上传越界与每帧分配），S3/S4 未开工**：`uClustered` 代码默认已是 1，但**无 UI / URL 开关、场景里没有点光/聚光、无暴力 vs clustered A/B、无 CPU 剔除耗时归因**；SSR 完全未开始。拆解见第七章
+- [~] **p1-light-ssr** 多光源与剔除（**Clustered 优先**：Forward + Clustered 两档，Deferred 已排除）+ SSR（屏幕空间反射）　**Clustered S1–S3 主体完成（2026-11-06），S4 SSR 未开工**：S1 多光源模型 / S2 cluster grid + 两张数据纹理 / S3-a 参数与面板接线、S3-c 截断告警、S3-d 剔除归因已落地；`?clustered=0&lightCount=N` 可 A/B，性能面板给出平均每 cluster 灯数 / 循环节省 / 剔除 CPU ms，全量 22 passed 守护。**默认值定稿 `lightCount=0`**（全站零回归，见 DEVLOG 2026-11-06）。**未做**：S3-b 灯位手调、S3-e 的 32/56 灯 A/B 与真机 GPU 数据、S3-f 站点条目、S4 SSR。拆解见第七章
 
 ### 阶段 2 · 观感增量
 
@@ -103,9 +104,9 @@ npm run build      # 生产构建
 - [ ] **p3-bake** 烘焙 lightmap + SH 探针（先做兜底）+ 烘焙器 Node CLI
 - [ ] **p3-ssgi** SSGI + 降噪器（SVGF / à-trous）
 
-### 阶段 4 · 深水区 ⚠️ 四选一，只做深一条
+### 阶段 4 · 深水区 ⚠️ 只做深一条（已锁定 DDGI）
 
-- [ ] **p4-deep** 深水方向已锁定 **DDGI**（动态漫反射全局光照）；其余 VXGI / SDF GI / 实时 PT 已排除。需 WebGPU，届时在 `createRenderer.ts` 单点切后端（2026-10-26 确认）
+- [ ] **p4-deep** 深水方向已锁定 **DDGI**（动态漫反射全局光照）；其余 VXGI / SDF GI / 实时 PT 已排除。需 WebGPU，届时在 `createRenderer.ts` 单点切后端（2026-10-26 确认）。**风险提示（2026-11-06）**：`capabilities.detect()` 直接取 WebGL2 上下文、`Pipeline` 依赖 `EXT_disjoint_timer_query_webgl2` 与 `WebGLRenderTarget` MRT，「只改一个文件」尚未验证；开工前需做 WebGPU 冒烟，验证整条 Pipeline 在 WebGPURenderer 下的可行性。
 
 ### 阶段 5 · 收尾
 
@@ -672,7 +673,7 @@ export interface ClusterSnapshot {
 | **S3-e** | `e2e/clustered.spec.ts`：同 URL 同灯数下两种模式截图 A/B（复用 `shadow.spec.ts` 的 `diffStats`），加「关灯阵回归」用例 | A/B 线性域 `meanAbs < 1`、`overRatio < 1%`；噪声基线先测再定阈值 |
 | **S3-f**（建议同时做） | 建 `light-ssr` 站点条目（`src/site/demos.ts`）→ `wip`，limitations 按 7.3.3.6 的风险条目如实填写 | 站点上能看到「多光源 + 剔除」，不再是只有 hdr / pbr-ibl 两个 done |
 
-**进度（2026-11-03）**：S3-a（`clusterParams` / `ClusteredPanel` / `ClusterSync` / `LightRig` / `e2e/clustered.spec.ts`）、S3-c（`activeLights` + 截断告警）、S3-d（`clusterStats` / `clusterStore` / 性能面板归因行）已落地。**参数默认值与面板文案仍留给本人定稿**（文件内已标 TODO），S3-b 的灯位 / 强度也待按场景手调。过程中修掉两个会让 clustered 完全失效的剔除 bug，详见 DEVLOG 2026-11-03。
+**进度（2026-11-06 更新）**：S3-a / S3-c / S3-d 已落地；**`CLUSTER_PARAM_DEFAULTS` 已定稿为 `clustered=true / lightCount=0 / lightSpin=false`**（理由见 `clusterParams.ts` 与 DEVLOG 2026-11-06），并由 `e2e/clustered.spec.ts` 的「默认画面与显式零灯阵一致」像素级用例守护，全量 22 passed。仍待做：S3-b 灯位 / 强度按场景手调、S3-e 的 32 / 56 灯 A/B 与满档热力、`ClusteredPanel` 的问题陈述与文案、S3-f 站点条目。过程中修掉两个会让 clustered 完全失效的剔除 bug，详见 DEVLOG 2026-11-03。
 
 ##### 7.3.3.4 灯数阶梯与要采集的数据
 
@@ -698,13 +699,14 @@ export interface ClusterSnapshot {
 ##### 7.3.3.5 验收清单
 
 - [ ] clustered 与暴力前向在 0 / 8 / 32 / 56 点光下画面差异均在噪声级（**0 / 8 已验证：同一次加载内切换 meanAbs = 0.000、差异像素 0.00%**；32 / 56 未测）
-- [x] 关闭 clustered 后画面与接入前逐字节级一致（`lightCount` 默认 0 → 灯阵不挂载、不建 cluster；e2e 守护）
+- [x] 参数默认值定稿、理由写进注释与 DEVLOG（2026-11-06）
+- [x] 默认进入零灯阵、画面与「显式 0 盏」在噪声级一致（`lightCount` 定稿 0；面板 / 归因 / 像素级三重断言，2026-11-06）
 - [x] 面板显示 `activeLights`、`avgLightsPerCluster`、循环节省、`cullCpuMs`、cluster 数，且为 5Hz 采样（2026-11-03）
 - [x] 灯数被 `MAX_LIGHTS` 截断时面板显式告警（同时报「请求 N 盏 / 生效 M 盏」与「被截断的 cluster 数」）
 - [x] `?clustered=` / `?lightCount=` 进 URL，A/B 两条链接可直接分享
-- [ ] 灯数阶梯表（8 / 32 / 56）的 **真实 GPU** ms + 压缩比进 README 性能表（当前只有 SwiftShader 参考值）
+- [ ] 灯数阶梯表（8 / 32 / 56）的 **真实 GPU** ms + 压缩比进 README 性能表（采集口径已备，真机数据待采）
 - [ ] cluster 调试视图（tile 叠加 / 灯数热力）在满档（合计 60 盏）下仍有意义（热力不应全屏饱和）
-- [x] `npm run typecheck` / `build` / 全量用例通过；新增 A/B 与归因断言（2026-11-03）
+- [x] `npm run typecheck` / `build` / 全量用例通过（2026-11-06 复跑：**22 passed**，含新增默认值语义用例）
 - [ ] 站点 `light-ssr` 条目不再是「规划中」，limitations 如实（CPU 剔除、无逐灯阴影、保守分配）
 
 ##### 7.3.3.6 风险与坑

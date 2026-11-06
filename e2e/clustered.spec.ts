@@ -2,17 +2,18 @@ import { expect, test, type Page } from '@playwright/test'
 import { PNG } from 'pngjs'
 
 /**
- * p1-light-ssr S3-a 接线验收（脚手架）。
+ * p1-light-ssr S3-a 接线验收。
  *
- * 覆盖三件「接线正确性」，不含渲染正确性：
- * - 默认进入不产生脏参数（lightCount 默认 0 → 灯阵不挂载，现有页面零回归）；
- * - `?clustered=&lightCount=` 能回填到面板；
- * - 面板操作会写回 URL（分享链接可复现的前提）。
+ * 覆盖：
+ * - 默认进入不产生脏参数，且默认画面与「显式 0 盏」逐像素一致
+ *   （lightCount 默认 0 → 灯阵不挂载、不构建 cluster，现有页面零回归）；
+ * - `?clustered=&lightCount=` 能回填到面板、面板操作会写回 URL；
+ * - 灯阵参与照明、剔除归因有读数、clustered 与暴力前向画面一致。
  *
  * 注意：断言里的默认值（clustered=true / lightCount=0）与 `clusterParams.ts` 的
- * CLUSTER_PARAM_DEFAULTS 一致；如果你改了默认值，这里要同步改，否则会误报。
+ * CLUSTER_PARAM_DEFAULTS 一致；改默认值会破坏分享链接语义，必须同步改这里。
  *
- * 画面 A/B 对照（S3-e）等灯阵与统计接完再启用，见文件末尾的 test.fixme。
+ * 未覆盖：32 / 56 盏的 A/B 一致性与满档 cluster 热力视图（S3-e 剩余项）。
  */
 
 const PANEL = '.panel:has-text("多光源")'
@@ -90,6 +91,37 @@ test('默认进入不写 cluster 参数（零回归）', async ({ page }) => {
   await expect
     .poll(() => new URL(page.url()).searchParams.get('lightCount'), { timeout: 10_000 })
     .toBeNull()
+
+  // 只断言 URL 无脏键抓不到「默认值漂移回 8」：此前 21 个用例全绿，
+  // 但所有页面一进来就挂 12 盏灯。这里把语义也钉死。
+  const panel = page.locator(PANEL)
+  await expect(panel.locator('select')).toHaveValue('0')
+  await expect(page.locator('.perf-panel')).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('.perf-cluster')).not.toContainText('已启用')
+  // enabled=false 时归因面板不渲染「平均每 cluster」等统计行
+  await expect(page.locator('.perf-pass-row:has-text("平均每 cluster")')).toHaveCount(0)
+})
+
+test('默认画面与显式零灯阵一致（默认值语义守护）', async ({ page }) => {
+  await page.goto('/d/hello-cube?presentation=0&speed=0&scene=cornell')
+  const panel = page.locator(PANEL)
+  await expect(panel).toBeVisible({ timeout: 20_000 })
+  await expect(panel.locator('select')).toHaveValue('0')
+
+  // 同一次加载内切换，等相机飞入收敛；两次 goto 会把插值差异误读成着色差异
+  await page.waitForTimeout(1800)
+  const before = await shootCanvas(page)
+
+  // 显式挂 8 盏再回到 0：若默认值又变成非 0，首帧已带灯，首尾两帧不会一致
+  await panel.locator('select').selectOption('8')
+  await page.waitForTimeout(600)
+  await panel.locator('select').selectOption('0')
+  await page.waitForTimeout(600)
+  const after = await shootCanvas(page)
+
+  const diff = diffStats(before, after)
+  expect(diff.meanAbs, `平均差 ${diff.meanAbs.toFixed(3)}`).toBeLessThan(1)
+  expect(diff.overRatio, `差异像素 ${diff.overRatio.toFixed(2)}%`).toBeLessThan(1)
 })
 
 test('切换点光档位会写回 URL', async ({ page }) => {

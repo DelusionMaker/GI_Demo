@@ -75,7 +75,7 @@ export const DEMOS: DemoMeta[] = [
       '演示模式默认隐藏技术 HUD，只留切场景、IBL 开关、白炉读数；点击「技术模式」恢复 HDR / 性能 / G-buffer 面板。',
     ],
     limitations: [
-      '自写 BRDF 的光照是单主光 + HDRI IBL（户外）/ RoomEnvironment（Cornell）；多光源、面光源与剔除待 p1-light-ssr / p1-shadow。',
+      '自写 BRDF 的直接光已支持多光源（Forward-Clustered 前向剔除）与 CSM 阴影，但默认 lightCount=0 不挂灯阵；面光源与逐灯阴影未做，GI 属阶段 3。',
       'Cornell Box 的顶灯只建了几何，尚未作为面光源发光；当前用单主平行光近似，因此没有软阴影与色溢（GI 属阶段 3）。',
       'MSAA 在 MRT 下已开启 4×（BeautyPass samples: 4），三附件 resolve 正常；深度在 SSR 阶段仍需目标设备实测。',
       'MRT 需要 EXT_color_buffer_float；不支持的设备降级为单目标，G-buffer 选项自动隐藏。',
@@ -143,7 +143,7 @@ export const DEMOS: DemoMeta[] = [
       '单次散射 GGX 在强粗糙度下损失多次散射能量；白炉实测中心 0.978（-2.2%），目标 ±2% 略超。',
       'HDR 只在支持浮点渲染目标（EXT_color_buffer_float）的设备启用 cube IBL；加载失败或不支持时回退 RoomEnvironment，天空仍可用 equirect HDR。',
       'LittlestTokyo 的 BLEND 玻璃在 MRT 下按不透明渲染（无硬件混合 / 折射）；baseColor 贴图已接，normal / metallicRoughness / emissive 未接。',
-      '当前为单主平行光；多光源与剔除属 p1-light-ssr 的范围。',
+      '多光源（Forward-Clustered）已实现并有暴力前向 A/B，但默认 lightCount=0；逐灯阴影与物理单位换算未做。',
       '天空是 1K HDR 直接采样，没有大气散射 / 雾；地面是纯色平面。',
     ],
     sources: [
@@ -222,21 +222,29 @@ export const DEMOS: DemoMeta[] = [
   },
   {
     id: 'deep-gi',
-    title: '深水区（四选一）',
-    oneLiner: 'VXGI / SDF GI / DDGI / 实时 PT —— 只选一条做深，其余以对比 demo 轻量呈现。',
+    title: 'DDGI · 动态漫反射全局光照',
+    oneLiner: '用世界空间辐照度探针网格做动态 GI；深水区只做深这一条，其余方向已排除。',
     layer: 'L3',
     stack: 'WebGPU compute',
     perf: 'realtime',
-    metric: '收敛过程动画 · 探针/体素中间量可视化',
+    metric: 'probe grid 收敛动画 · irradiance / visibility 图集可视化',
     effort: '8–20 天',
     status: 'planned',
     algorithm: [
-      '四者都需要世界空间辐照度缓存，先抽象出这一层再二选一，避免重复造轮子。',
-      'WebGL2 无 compute：体素化、探针更新、BVH 重建必须上 WebGPU。',
-      '启用 WebGPU 时在 createRenderer 单点分叉，避免两套 demo 代码。',
+      '阶段 4 方向已锁定 DDGI（2026-10-26，见 DEVLOG）：与阶段 3 静态 SH 探针同属世界空间辐照度探针范式，可复用 probe grid 数据结构与 irradiance 采样接口；VXGI / SDF GI / 实时 PT 已排除。',
+      'probe grid 生成 → 每探针射线采样 → irradiance / visibility 两张图集更新 → 时域累积与降噪；不依赖硬件光追。',
+      'WebGL2 无 compute：探针与图集更新走 WebGPU compute；低端 / 无 WebGPU 设备降级到 p3-bake 的静态 lightmap + SH 探针，DDGI 只做高端增强。',
+      '后端在 src/core/renderer/createRenderer.ts 分叉；开工前需实测 WebGPURenderer 能否承载现有自建 Pipeline（MRT / GPU 计时的等价物），而不只是检测 navigator.gpu。',
     ],
-    limitations: ['Web 端无硬件光追，路径追踪必须靠累积或离线烘焙。', 'WebGPU 覆盖需逐版本实测，必须配降级路径。'],
-    sources: [{ label: 'WebGPU 规范', href: 'https://www.w3.org/TR/webgpu/' }],
+    limitations: [
+      'Web 端无硬件光追，路径追踪必须靠累积或离线烘焙。',
+      'WebGPU 覆盖需逐设备实测，且必须配降级路径。',
+      '探针密度不足时会漏光；visibility 项需同时防漏光与过遮蔽。',
+    ],
+    sources: [
+      { label: 'Dynamic Diffuse Global Illumination (Majercik et al.)', href: 'https://jcgt.org/published/0008/02/01/' },
+      { label: 'WebGPU 规范', href: 'https://www.w3.org/TR/webgpu/' },
+    ],
   },
 ]
 

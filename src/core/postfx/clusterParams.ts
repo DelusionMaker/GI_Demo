@@ -22,18 +22,19 @@ export type ClusterParams = {
 }
 
 /**
- * TODO(作品集 · 你来定稿) —— 这三个默认值是实验设计，不是随便填的，请自己确认：
+ * 默认值已定稿（2026-11-06，见 DEVLOG）—— 三个值都是实验设计，不再随意改动：
  *
- * 1. `clustered` 默认值：true = 默认走剔除路径，对照组由链接显式进入；
- *    false = 默认走暴力路径，评审第一次进来看到的就是「慢的那条」。
- * 2. `lightCount` 默认值：0 保证现有页面零回归；改成 8/32 则所有页面一进来就是多光源。
- * 3. `lightSpin` 默认值：几乎应当保持 false —— 它会让 A/B 截图失去可比性。
+ * 1. `clustered: true`：默认走剔除路径；对照组由 `?clustered=0` 显式进入。
+ * 2. `lightCount: 0`：`clusterParams` 是全站单例，非 0 会让 hdr / pbr-ibl /
+ *    shadows 页面一进来就挂灯阵，hero 画面与 README 截图、白炉 / IBL 基线全部漂移。
+ *    多光源只在显式带 `?lightCount=` 的链接或后续 `light-ssr` 页面里出现。
+ * 3. `lightSpin: false`：旋转会破坏 A/B 截图的可比性。
  *
- * 改完在 DEVLOG 里记一句「为什么这么选」，面试会问。
+ * ⚠️ 这三个值是分享链接的语义契约，改动前先读文件头注释。
  */
 export const CLUSTER_PARAM_DEFAULTS: ClusterParams = {
   clustered: true,
-  lightCount: 8,
+  lightCount: 0,
   lightSpin: false,
 }
 
