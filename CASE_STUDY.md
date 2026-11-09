@@ -194,7 +194,7 @@ MRT 能力探测为了回读把 clearColor 设成 `(0,0,0,0)`，之后只恢复�
 | 自建链 vs 直出（Cornell） | 线性域平均差 **≈0.2**，> 8 像素 **≈0.25%** |
 | 阴影 A/B | 平均差 **0.83**，> 8 像素 **0.55%**（噪声 0.00） |
 | Bloom A/B | 平均差 **≈59.89**，> 8 像素 **76.35%** |
-| 构建 | 671 modules；1,383.02 kB / gzip 399.41 kB（`index` / `vendor` / `three` 三 chunk，以 `npm run build` 输出为准） |
+| 构建 | 671 modules；≈1.38 MB / gzip ≈0.40 MB（`index` / `vendor` / `three` 三 chunk，精确值以 `npm run build` 输出为准） |
 
 白炉测试会等 `data-samples > 0` 再读数，避免用初始默认值 1.000 蒙混过关。用于回归的阈值是 5%，HUD 仍按目标 ±2% 显示。像素级数值取两次复跑的约数（SwiftShader 有帧间噪声）；上述数值来自软件渲染器，**不是性能数据**。
 

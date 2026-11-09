@@ -6,13 +6,13 @@
 
 ---
 
-## 〇、进度快照（2026-11-06；基线 HEAD `69701ac`，工作区含未提交改动）
+## 〇、进度快照（2026-11-09；HEAD `e06d87b`，工作区干净）
 
 | 层 | 状态 | 说明 |
 | --- | --- | --- |
 | 阶段 0 · 底座 | 基本完成 | p0-base 骨架 / p0-hdr / p0-gbuffer-hud 完成；p0-assets 2/3（缺 Sponza 室内） |
-| 阶段 1 · 直接光照 | 主体完成 | p1-pbr-ibl 完成；p1-shadow 主体完成（缺级联混合 / VSM / texel snapping）；**p1-light-ssr：Clustered S3-a/c/d 完成，S3-b/S3-e 收尾与 S4 SSR 未做** |
-| 阶段 2–5 | 未开始 | GTAO / VFX / 烘焙 / SSGI / DDGI / 收尾 |
+| 阶段 1 · 直接光照 | 主体完成 | p1-pbr-ibl 完成；p1-shadow 主体完成（缺级联混合 / VSM / texel snapping）；p1-light-ssr Clustered 主体完成（S3-b 灯位 / 文案、S4 SSR 未做） |
+| 阶段 2–5 | S1 骨架已搭 | p3-bake S0 六项定稿；S1 CLI 骨架可跑（三处算法段留由本人实现）；GTAO / VFX / SSGI / DDGI / 收尾未开始 |
 
 站点展示：8 条 demo 中 `done` 2 条（hdr、pbr-ibl）、`wip` 3 条（hello-cube、shadows、light-ssr）、`planned` 3 条（bake-gi、ssgi、deep-gi，已锁定 DDGI）。
 
@@ -23,9 +23,11 @@
 3. ~~默认值口径矛盾~~ **已修**：`lightCount` 定稿 0，e2e 增加像素级零回归守护（见 DEVLOG 2026-11-06）。
 4. ~~多光源不可见~~ **已修**：`light-ssr` 站点条目已建（第 8 条，`wip`），默认户外 + 32 盏点光 + 技术模式，27 个用例含站点入口、跨页复位与满档热力不饱和回归。
 5. ~~满档热力饱和~~ **已修**：热力分母改为本帧单 cluster 峰值线性归一化，色阶 2 → 7、纯红 50.9% → 15.6%（见 DEVLOG 2026-11-06）。
-6. **仍缺（需本人参与）**：首页卡片封面 GIF / hero 截图仍是占位；`ClusteredPanel` 与站点条目的文案、灯位 / 强度待定稿；SSR 无页面；WebGPU 零实测 —— `capabilities.detect` 与 `Pipeline` 依赖 WebGL2，`three/webgpu` 单点分叉假设未验证；代码未附 LICENSE。
+6. **仍缺（需本人参与）**：首页卡片封面 GIF / hero 截图仍是占位；`ClusteredPanel` / `light-ssr` 的文案与灯位强度待本人定稿（`bake-gi` 文案已按授权代拟、可覆写）；SSR 无页面；WebGPU 零实测 —— `capabilities.detect` 与 `Pipeline` 依赖 WebGL2，`three/webgpu` 单点分叉假设未验证；代码未附 LICENSE。
 
-**建议推进顺序（不绑定日期）**：真机 GPU 性能采样 → 面板 / 站点文案与灯位手调（本人）→ SSR → WebGPU 冒烟（验证整条 Pipeline，不只是 `navigator.gpu`）→ Sponza 室内（与烘焙一并做）→ 烘焙 / GI 主线（probe 层按 DDGI 可复用设计）→ DDGI → 收尾。
+**建议推进顺序（不绑定日期，2026-11-09 调整）**：p3-bake S0（已完成）→ S1 骨架（已搭，三处算法段待本人）→ S1 算法段实现 → S2 运行时与探针可视化 → S3 验收 → 真机会话（性能采样 / MSAA `DepthTexture` 探针 / WebGPU 冒烟 / 户外热力目视 / 封面素材，本人）→ SSR → Sponza 室内（与 lightmap 一并做）→ p3-ssgi → DDGI → 收尾。
+
+> 真机 GPU 性能检测按本人决定移到收尾；但同一次真机会话里的 `DepthTexture` 探针、WebGPU 冒烟、目视复核与封面素材不要随它一起丢掉 —— 前两项分别是 SSR 与阶段 4 的开工门。
 
 ---
 
@@ -50,7 +52,7 @@
 
 - **与手册建议的偏差**：手册 3.5 建议「复杂多 pass 页用 vanilla three」。本项目按用户要求统一走 R3F。缓解方式：渲染核心保持与 React 无关的 module/class，React 只负责挂载与 UI，避免 reconciler 与自建多 pass 管线互相打架。**该缓解方案在 p0-hdr 落地时正式执行，见「三」的方案 A。**
 - **`onBeforeCompile` 脆弱**：依赖 three 内部 chunk 命名，必须锁 three 版本、集中管理注入点、加冒烟测试（手册 3.7）。
-- **构建体积**：2026-11-06 起 `manualChunks` 已拆出 three / vendor：671 modules，合计 **1,383.02 kB（gzip 399.41 kB）** = `index` 116.50 + `vendor` 572.64 + `three` 693.88 kB（以 `npm run build` 输出为准）。`three` / `vendor` 仍触发 >500 kB 告警，进一步拆分需按 demo 动态 import（推迟到 eng-shared）。
+- **构建体积**：2026-11-06 起 `manualChunks` 已拆出 three / vendor：671 modules，合计 **≈1.38 MB（gzip ≈0.40 MB）**（精确值以 `npm run build` 输出为准，不随每次文案改动追数字）。`three` / `vendor` 仍触发 >500 kB 告警，进一步拆分需按 demo 动态 import（推迟到 eng-shared）。
 - **MobX 7 是新主版本**：注解值必须是 `Annotation` 对象（v6 允许的 `"action.bound"` 字符串写法已失效），绑定动作改用 `actionBound`。新增 store 时不要照抄 v6 示例。
 - **性能归因**：不要只看 `renderer.info`（不含 GPU 时间），需接 `EXT_disjoint_timer_query_webgl2` / WebGPU timestamp-query 自己测每个 pass。
 
@@ -103,8 +105,53 @@ npm run build      # 生产构建
 
 ### 阶段 3 · GI 主线 ⚠️ 烘焙先做，保证兜底
 
-- [ ] **p3-bake** 烘焙 lightmap + SH 探针（先做兜底）+ 烘焙器 Node CLI
+- [x] **p3-bake · S0 架构决策**：6 项全部定稿（2026-11-09，见 DEVLOG）。**纯设计，不产生运行时代码**
+- [~] **p3-bake · S1**：最小切片 —— Cornell + 低阶 SH 探针 + Node CLI 烘焙器（跳过 lightmap UV2）。**骨架已搭（2026-11-09）**：`npm run bake` 可跑、typecheck 通过、求交与三线性权重自检通过
+  - 骨架文件：`src/core/gi/bakeTypes.ts`（契约 / 常量）、`cornellData.ts`（渲染与 CLI 唯一数据源）、`grid.ts`（均匀网格 + 三线性）、`trace.ts`（OBB 求交）、`irradiance.ts`（S0 接口）、`bakeMath.ts`（**三处留白**）、`scripts/bake-probes.ts`（CLI）
+  - 待本人实现：`bakeMath.ts` 的 `sampleIndirect()` / `projectToSH()` / `evalSH()`，每个 TODO 都写好了形状要求、口径与自查点；填完把 `BAKE_MATH_IMPLEMENTED` 置 true
+  - 待本人定稿：`COEFFS_PER_PROBE`、`DEFAULT_GRID`（spacing / dims）、`CORNELL_LIGHT.emission`（顶灯不发光时烘焙不会有间接光，CLI 会提示）
+  - `backends/StaticSH.ts` / `DDGI.ts` 推迟到 S2；CLI 产物默认写 `bake-out/`（已 gitignore），S3 决定是否入库到 `public/baked/`
+- [ ] **p3-bake · S2**：运行时接入 + 探针可视化 + `?bake=` 零回归 A/B
+- [ ] **p3-bake · S3**：验收 —— `bake-gi` 条目 `planned → wip`，补齐 metric 的三个数字
 - [ ] **p3-ssgi** SSGI + 降噪器（SVGF / à-trous）
+
+#### S0 · 统一辐照度接口（6 项已定稿）
+
+**为什么先做这一层**：静态 SH 探针与 DDGI 同属世界空间辐照度缓存，差别只在 backend。先抽象采样入口，避免规划坑 #1「同一层缓存写两套代码」，也兑现 DEVLOG 2026-10-26 锁定 DDGI 时留的「阶段 3 先抽象探针层」。
+
+1. ✅ **统一接口**：`sampleIrradiance(worldPos, normal) → vec3`，着色侧不感知来源；静态端查 SH、DDGI 端查八面体图集，只换 backend。
+   - 语义契约：返回 `E/π`（平均 radiance），**不含 albedo / kD / 显式 π**；`worldPos` / `normal` 均为世界空间；无探针覆盖返回 `vec3(0)`，由着色侧按 `?bake=` 决定是否回退 `uAmbient`（保证关闭时逐像素零回归）。
+   - 依据：现有 `gbuffer_ibl.glsl` 的 `irradianceOverPi` 已是 `E/π` 语义，但 `iblDiffuse()` 返回的是乘过 `kD*albedo` 的最终贡献、`gbuffer.frag` 的 `ambient` 也是最终贡献；新接口必须显式区分，否则叠加时差一个 π 或重复乘材质项（同类坑见 CASE_STUDY 3.3 白炉补 π）。
+   - 目标形态（S1 落地时建文件，S0 不建）：
+     ```ts
+     export type IrradianceBackend = 'static-sh' | 'ddgi'
+     export interface IrradianceSource {
+       readonly backend: IrradianceBackend
+       sampleIrradiance(worldPos: THREE.Vector3, normal: THREE.Vector3, out: THREE.Vector3): void
+       dispose(): void
+     }
+     ```
+2. ✅ **辐照度表示**：第一版低阶 SH + 三线性插值（可验证、带宽可控、Cornell 够用）。每探针系数数量作为 `bakeTypes.ts` 的显式常量在 S1 定稿，不阻塞接口；高阶 SH / 3D 纹理辐照度体积 + 梯度修正列入可选升级位。
+3. ✅ **visibility**：接口**不加参数**，保持两参数形态；DDGI 的 depth / backface 抗漏光放在 backend 内部。第一版静态探针会漏光，写进 limitations。
+4. ✅ **probe grid**：均匀网格 + 显式 `spacing` 常量，不做自适应布点；世界坐标 ↔ probe index 换算要能被 DDGI 复用。
+
+5. ✅ **正确性判据与「三个数字」口径**（2026-11-09 按推荐定稿）：
+   - 参考解：Cornell Box（已有官方尺寸程序化场景）+ **同一烘焙器高 spp 自对照**作相对真值，不引入外部参考图资产；白炉能量守恒作辅助（现有 0.978 / -2.20% 基线，开 GI 后不应显著漂移）。
+   - 阈值：**先测同参数连渲两次的确定性噪声基线，再定间接光误差阈值**（沿用 `e2e/shadow.spec.ts` 做法），不拍脑袋写死数字；`?bake=0` 必须逐像素零回归。
+   - 烘焙耗时：Node CLI wall-clock，固定 seed / spp / 探针数，3 次取中位数，同时报 spp 与探针数（否则数字不可比）。
+   - 产物体积：入库文件字节数（未压缩）+ gzip 后字节数，注明格式与版本号。
+   - 运行时开销：CPU 侧探针查找 + 三线性插值（5Hz 采样进 PerfPanel）、每片元采样次数（结构性指标）、探针数据常驻内存；**GPU ms 留到最后的真机会话**，SwiftShader 数据只作趋势、不可引用。
+   - 口径同步写入 README 性能章节，S3 填真值。
+6. ✅ **降级档位与站点文案**（2026-11-09 按推荐定稿）：
+   - `QualityTier = 'webgpu' | 'webgl2' | 'baked' | 'video'` 语义：`baked` = 低端 / 无 WebGPU 设备兜底，保留静态间接光，损失动态光源与动态几何的 GI 响应；DDGI 只做高端增强。降级链：DDGI(WebGPU) → 实时直接光 + 静态烘焙(WebGL2/baked) → 预渲染视频(video)，每级明写损失。
+   - **第一版不改 `capabilitiesStore.tier`**：它现在直接返回 `backend`，`baked` / `video` 尚未启用；先写文档语义、`bake-gi` 页面 HUD 标注「静态烘焙结果 · 无动态 GI」，多级降级路径留到 `p5-final` 接 `tier`，避免现在动能力系统。
+   - `src/site/demos.ts` 的 `bake-gi` 条目已补 `problem`、按 S0 决策重写 `algorithm`（去掉 UV2 / 四面体插值）、`formulas` 改三线性表述、`limitations` 补「第一版无 visibility / 会漏光」「无 lightmap UV2」「GPU 性能待真机」、`sources` 补稳定参考出处；标题改为「烘焙 GI · SH 光照探针」以免与「第一版仅探针」不符。**文案为按授权代拟，本人可覆写。**
+
+**S0 验收点（2026-11-09 全部通过）**：6 项决策 + 接口签名 + 文件清单 + 验收口径入档；无待定项；不产生运行时代码。接口语义与「为什么」由本人拍板（5 / 6 按授权采用推荐口径），TS 类型 / 文件清单 / 文档排版 / 站点文案代劳。
+
+**文件清单（2026-11-09 更新）**：已落地 `src/core/gi/irradiance.ts`（契约）、`bakeTypes.ts`（产物格式 / 版本号 / 待定常量）、`cornellData.ts`（渲染侧与 CLI 唯一数据源）、`grid.ts`（均匀网格 + 三线性）、`trace.ts`（OBB 求交）、`bakeMath.ts`（**三处留白**）、`scripts/bake-probes.ts`（Node CLI）。**S2 再建**：`backends/StaticSH.ts`、`backends/DDGI.ts`、`src/core/postfx/shaders/lib/gbuffer_gi.glsl`（着色侧统一采样）。CLI 产物默认写 `bake-out/`（已 gitignore），S3 决定是否入库到 `public/baked/`。
+
+**可选升级位（明确不做）**：高阶 SH、3D 纹理辐照度体积 + 梯度修正、自适应布点、四面体插值。
 
 ### 阶段 4 · 深水区 ⚠️ 只做深一条（已锁定 DDGI）
 

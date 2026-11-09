@@ -10,6 +10,142 @@
 
 ---
 
+## 2026-11-09 · p3-bake S1 骨架落地：数据源统一、CLI 可跑、三处算法段留白
+
+### 目标
+
+按本人「想亲手写算法段」的选择搭好 S1 框架：链路能跑、口径可见、三处数学留白且未实现状态不会被误当成完成。本轮不写任何 GI 算法。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `src/core/gi/bakeTypes.ts` | 新增 | Vec3 / 产物格式 / 版本；`COEFFS_PER_PROBE` 与 `DEFAULT_GRID` 两个待定常量 |
+| `src/core/gi/cornellData.ts` | 新增 | Cornell 几何 / 材质 / OBB 表面 / 顶灯的**唯一数据源**；`CORNELL_LIGHT.emission` 留待定稿 |
+| `src/core/gi/grid.ts` | 新增 | 均匀网格、线性索引 ↔ 世界坐标、8 邻域三线性权重（框架） |
+| `src/core/gi/trace.ts` | 新增 | OBB slab-test 求交（框架），旋转角取自 cornellData |
+| `src/core/gi/irradiance.ts` | 新增 | S0 统一接口契约（S2 才接 backend） |
+| `src/core/gi/bakeMath.ts` | 新增 | **三处自写留白**：`sampleIndirect` / `projectToSH` / `evalSH` + `BAKE_MATH_IMPLEMENTED` 开关 |
+| `scripts/bake-probes.ts` | 新增 | Node CLI：参数 / 固定 seed / 产物序列化 / 三个数字输出；骨架态只自检提示 |
+| `src/core/scene/CornellBox.tsx` | 改造 | 几何与材质数值改为从 cornellData 读取（数值不变） |
+| `tsconfig.json` / `package.json` | 改造 | `allowImportingTsExtensions` + include `scripts`；新增 `npm run bake` |
+| `README.md` / `TODO.md` | 文档 | bake 命令与 Node 要求、目录、下一步；S1 状态 / 文件清单 / 快照 / 顺序同步 |
+
+### 关键决策
+
+1. **CLI 用 Node 24 原生 type stripping，零新增依赖**：本机 Node v24.14.1，直接 `node scripts/bake-probes.ts`，不引入 `tsx` / `vite-node`。代价是 CLI 链必须显式 `.ts` 扩展名、不用 `@/` 别名、不 import three / React / DOM；因此 `tsconfig` 加 `allowImportingTsExtensions` 并把 `scripts` 纳入类型检查。
+2. **Cornell 数据单一来源**：原先几何常量与反照率藏在 R3F 组件里，CLI 无法复用；另抄一份会导致「烘的是 A 场景、渲染的是 B 场景」，直接摧毁 S0 定的高 spp 自对照判据。现在渲染侧与 CLI 同读 `cornellData.ts`，所有表面统一用 OBB 表达（薄板 = 极扁盒子），倾角与 `rotation-y` 同值。
+3. **未实现状态必须可见**：`BAKE_MATH_IMPLEMENTED=false` 时 CLI 只打印三处 TODO、两个待定常量与顶灯 emission 提示，**不写产物、不报假耗时**。填完算法段把开关置 true 才真实烘焙并输出三个数字（沿用 p0-hdr「曲线未实现时打水印」的做法）。
+4. **口径写进留白注释**：三处 TODO 都写明返回 `E/π`、不含 albedo / kD、系数顺序、与 S2 shader 同形约束及自查点，避免填的时候重踩 CASE_STUDY 3.3 的 π 坑。
+5. **backends 推迟到 S2**：`StaticSH` / `DDGI` / `gbuffer_gi.glsl` 属运行时接入，骨架阶段不建空壳；产物默认 `bake-out/`（已 gitignore），S3 再决定是否入库 `public/baked/`。
+
+### 踩坑与修复
+
+1. 首版 `trace.ts` 把命中法线声明成 readonly `Vec3` 后按下标赋值，类型报错；改为可变 `number[]`。
+2. 抽取 `CornellBox.tsx` 常量时第一次 replace 因注释里漏了「Box」未匹配，重读文件后按原文修正 —— 仍是「编辑前先读当前内容」那条。
+3. 构建体积上一轮已改成约数，本轮 672 modules / index 118.41 kB 不必再逐次追数字。
+
+### 验证（2026-11-09）
+
+- `npm run typecheck`：通过（含新增 `scripts/`）。
+- `npm run bake`：退出码 0，打印骨架自检与待办，未写任何产物。
+- `npm run build`（含 typecheck）：通过，672 modules；`index` 118.41 kB（gzip 42.59）/ `vendor` 572.64 / `three` 693.88。
+- `npx playwright test`：**27 passed**；Cornell 相关 A/B（自建链 0.213 / 白炉 0.978 / 阴影 0.83）与改动前一致 —— 数据抽取没有改变渲染。
+- 框架自检：房间中心向上命中顶灯 t=2.983 法线 [0,-1,0]；向下命中地板 t=2.499 法线 [0,1,0]；向 +x 命中旋转高块 t=0.443 且法线随 yaw 旋转；三线性权重和 = 1，探针数 343。
+
+### 遗留 / 下一步
+
+1. **本人实现** `bakeMath.ts` 三处算法段，并把 `BAKE_MATH_IMPLEMENTED` 置 true。
+2. **本人定稿** `COEFFS_PER_PROBE`、`DEFAULT_GRID`、`CORNELL_LIGHT.emission`。
+3. S1 完成后 CLI 会校验系数长度与 `evalSH` 有限性；S2 再接 backends / shader / 调试视图 / `?bake=` 零回归。
+
+---
+
+## 2026-11-09 · p3-bake S0 补完：验收口径与降级 / 站点文案定稿
+
+### 目标
+
+按本人授权，把 S0 原「以后再定」的第 5、6 项采用推荐口径定稿，S0 六项全部关闭。仍不产生运行时代码（仅站点元数据文案）。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `TODO.md` | 改造 | S0 第 5 / 6 项由待定改为定稿、验收点勾销、`[~] → [x]`，快照 / 建议顺序 / 构建体积口径同步 |
+| `src/site/demos.ts` | 改造 | `bake-gi` 条目按 S0 决策重写：标题、`problem`、`algorithm`、`formulas`、`limitations`、`sources` |
+| `README.md` / `CASE_STUDY.md` | 改造 | 性能章节补烘焙 GI「三个数字」采集口径；构建体积改为约数 |
+| `DEVLOG.md` | 改造 | 本条决策记录 |
+
+### 关键决策（按授权采用推荐口径）
+
+1. **正确性判据**：Cornell + 同一烘焙器高 spp 自对照作相对真值（不引入外部参考图资产）；白炉作能量守恒辅助；阈值先测同参数连渲两次的确定性噪声基线再定，不写死数字；`?bake=0` 逐像素零回归。
+2. **三个数字量法**：烘焙耗时 = CLI wall-clock（固定 seed / spp / 探针数、3 次中位数，同时报 spp 与探针数）；产物体积 = 入库未压缩字节数 + gzip 字节数（注明格式与版本号）；运行时开销 = CPU 侧插值（5Hz 采样）+ 每片元采样次数 + 常驻内存。**GPU ms 留到真机会话**，与本人「性能检测最后做」的决定一致。
+3. **降级档位**：`baked` = 低端 / 无 WebGPU 兜底，损失动态 GI 响应；第一版不改 `capabilitiesStore.tier`（现直接返回 `backend`，`baked` / `video` 未启用），只写文档语义与页面 HUD 标注，多级降级路径留 `p5-final`。
+4. **站点文案**：按授权代拟，`bake-gi` 标题改「烘焙 GI · SH 光照探针」；`status` 仍 `planned`，S3 才改 `wip`。文案本人可覆写。
+
+### 踩坑与修复
+
+1. **站点描述与架构决策打架**：原 `bake-gi` 的 `algorithm` 写「UV2 无重叠展开」「四面体插值」，与 S0 已定的「第一版跳过 lightmap UV2」「三线性」冲突；`sources` 仅一条 Wikipedia。已一并对齐 —— 本项目多次因这类漂移返工（见 DEVLOG 2026-11-03 文档同步条目）。
+2. **不编造参考链接**：`sources` 只补稳定可访问的官方 / 百科链接，不写没核实过的论文 DOI。
+3. **构建体积数字反复腐烂**：文案改动让 index chunk 从 116.50 增至 117.95 kB，文档统一改成约数「≈1.38 MB / gzip ≈0.40 MB」，精确值以 `npm run build` 输出为准。
+
+### 验证（2026-11-09）
+
+- `npm run build`（含 `tsc --noEmit`）：通过。671 modules；`index` 117.95 kB（gzip 42.39）/ `vendor` 572.64 / `three` 693.88，合计 1,384.47 kB / gzip 400.05 kB。
+- `npx playwright test`：**27 passed**（纯文案与文档改动，无渲染逻辑变更）。
+- `git diff --check` 通过；`src/core/` 下仍无 `gi/` 目录，S1 才建。
+
+### 遗留 / 下一步
+
+1. S1 最小切片：Cornell + 低阶 SH 探针 + Node CLI，按已定口径输出三个数字。
+2. 站点文案本人可随时覆写；`bake-gi` 状态在 S3 才 `planned → wip`。
+3. 真机会话仍按本人决定放收尾。
+
+---
+
+## 2026-11-09 · p3-bake S0 决策：统一辐照度接口与探针层边界
+
+### 目标
+
+在 GI 主线动手前，定下静态 SH 烘焙与 DDGI 共用的采样契约，避免阶段 4 返工。本人只做决策，本轮不产生运行时代码。
+
+### 改动文件
+
+| 文件 | 类型 | 内容 |
+| --- | --- | --- |
+| `TODO.md` | 改造 | 阶段 3 新增 S0 拆解（4 项已定 / 2 项待定 / 接口签名 / 文件清单 / 验收点）；建议顺序改为 GI 优先；快照 HEAD 与阶段状态订正 |
+| `DEVLOG.md` | 改造 | 本条决策记录 |
+
+### 关键决策（本人拍板）
+
+1. **统一接口** `sampleIrradiance(worldPos, normal) → vec3`：静态 SH 与 DDGI 图集同属世界空间辐照度缓存，只换 backend，着色侧不感知来源。返回 `E/π`、不含 albedo / kD；world 空间；无覆盖返回 `vec3(0)`。
+2. **第一版低阶 SH + 三线性**：可验证、带宽可控、Cornell 够用；高阶 SH / 3D 纹理体积 + 梯度修正写入可选升级位。
+3. **接口不加 visibility 参数**：DDGI 的 depth / backface 抗漏光放在 backend 内部；第一版静态探针会漏光，如实写进 limitations。
+4. **均匀网格 + 显式 spacing 常量**：不做自适应布点；worldPos ↔ probe index 换算对 DDGI 可复用。
+
+### 待定与最晚决定时点
+
+- **正确性判据与「三个数字」口径**（参考解、偏差阈值、烘焙耗时 / 产物体积 / 运行时开销的量法）：最晚在写 `scripts/bake-probes.ts` 之前定，CLI 输出由它决定。
+- **降级档位与站点文案**（`QualityTier.baked` 语义、`bake-gi` 的 `problem` / `formulas` / `limitations` / `sources`）：最晚在该条目 `planned → wip` 之前定。
+- 两项都不阻塞接口签名与文件清单，因此 S0 可就此结项，不空等。真机 GPU 性能检测按本人决定移到收尾。
+
+### 踩坑与修复
+
+- **量纲坑（提前规避）**：现有 `gbuffer_ibl.glsl` 的 `irradianceOverPi` 是 `E/π`，但 `iblDiffuse()` 返回的是乘过 `kD*albedo` 的最终漫反射贡献，`gbuffer.frag` 的 `ambient` 同样是最终贡献。新接口若不写明「不含材质项」，静态探针与 IBL 叠加会差一个 π 或重复乘 albedo —— 与 CASE_STUDY 3.3「白炉补 π」同类。已在契约注释里写死。
+
+### 验证
+
+- 纯决策条目，无运行验证；本轮只改文档（`git diff --check` 通过）。
+- 未产生代码文件：`src/core/` 下仍无 `gi/` 目录，按约定 S1 落地时再建。
+
+### 遗留 / 下一步
+
+1. S1 最小切片：Cornell + 低阶 SH 探针 + Node CLI，跳过 lightmap UV2。
+2. 两项待定在各自最晚时点前补齐。
+3. 真机会话（放收尾）仍需完成：性能采样、MSAA `DepthTexture` 探针、WebGPU 冒烟、户外热力目视、封面素材。
+
+---
+
 ## 2026-11-06 · S3-e 收口：cluster:heat 满档饱和修复与不饱和回归
 
 ### 目标

@@ -70,7 +70,7 @@ canvas（sRGB）
 | 自建链 vs 直出（Cornell） | 线性域平均差 **≈0.2**，> 8 像素 **≈0.25%** |
 | 阴影 A/B | 平均差 **0.83**，> 8 像素 **0.55%**（确定性噪声 0.00） |
 | Bloom A/B | 平均差 **≈59.89**，> 8 像素 **76.35%** |
-| 构建 | 671 modules；合计 1,383.02 kB / gzip 399.41 kB（`index` 116.50 / `vendor` 572.64 / `three` 693.88 kB；后两者仍有 >500 kB 体积告警，以 `npm run build` 输出为准） |
+| 构建 | 671 modules；合计 ≈1.38 MB / gzip ≈0.40 MB（拆为 `index` / `vendor` / `three` 三 chunk；后两者仍有 >500 kB 体积告警，精确值以 `npm run build` 输出为准） |
 
 这些是**回归指标**，不是画质评分；白炉读数会随材质的 roughness 变化，HUD 会显示当前粗糙度。像素级 A/B 在 SwiftShader 下有帧间噪声，上表为多次复跑的代表值（取约数）。以上均为软件渲染器数据，只用于守护回归，不是性能数据。
 
@@ -106,6 +106,15 @@ canvas（sRGB）
 
 首屏资产约 6 MB（HDR 1.12 MB + GLB 3.94 MB + Draco 解码器约 1 MB）。
 
+### 烘焙 GI 的数字口径（p3-bake，S3 填真值）
+
+`bake-gi` 的 metric 是「烘焙耗时 / 产物体积 / 运行时开销」，采集口径已定：
+
+- **烘焙耗时**：Node CLI wall-clock，固定 seed / spp / 探针数，3 次取中位数，同时报 spp 与探针数（否则数字不可比）。
+- **产物体积**：入库文件的未压缩字节数 + gzip 后字节数，注明格式与版本号。
+- **运行时开销**：CPU 侧探针查找 + 三线性插值（5Hz 采样进 PerfPanel）、每片元采样次数（结构性指标）、探针数据常驻内存。
+- **GPU ms 留到真机会话补**；SwiftShader 数值只作趋势，不可引用。正确性判据为 Cornell + 同一烘焙器高 spp 自对照，误差阈值先测确定性噪声基线再定。
+
 ## 资产与许可
 
 - HDRI：**Poly Haven** `kloppenheim_06_puresky_1k.hdr`，CC0，<https://polyhaven.com/hdris>
@@ -123,9 +132,12 @@ npm run dev        # 本地开发
 npm run typecheck
 npm run smoke      # Playwright；截图写到 e2e/screenshots（不入库）
 npm run build
+npm run bake       # p3-bake S1 烘焙 CLI（Node 24 原生 TS）
 ```
 
 `public/` 需要包含 `hdr/`、`assets/`、`draco/`；`docs/images/` 是 README / case study 用的整理稿截图。
+
+**烘焙 CLI**：`npm run bake` 需要 Node ≥ 24（原生 TypeScript type stripping，不引入 `tsx` / `vite-node` 等新依赖）。当前是 **S1 骨架**：`src/core/gi/bakeMath.ts` 的三处算法段（`sampleIndirect` / `projectToSH` / `evalSH`）留由本人实现；`BAKE_MATH_IMPLEMENTED=false` 时 CLI 只打印自检提示，**不写产物、不报假数字**。填完并把开关置 true 后，产物默认写 `bake-out/`（已 gitignore），并输出性能章节约定的三个数字。
 
 浏览器要求：WebGL2；MRT / HDR 需要 `EXT_color_buffer_float`。不支持时降级单目标，G-buffer 选项隐藏；HDR cube 失败时 IBL 回退 RoomEnvironment，天空仍保留 equirect HDR。
 
@@ -133,6 +145,7 @@ npm run build
 
 ```text
 src/core/postfx/        Pipeline、BeautyPass、HDR 链、GBufferMaterial / SkyMaterial、IBL 环境
+src/core/gi/            辐照度契约 / 探针网格 / Cornell 唯一数据源 / S1 烘焙算法段（骨架）
 src/core/scene/         CornellBox / OutdoorScene / GltfScene / SceneAsset
 src/core/camera/        CameraRig（预设机位 / 数字键 / 巡航）
 src/demos/hello-cube/   演示 Stage、HUD、演示模式、白炉读数
@@ -143,11 +156,11 @@ docs/images/            README 用截图
 
 ## 下一步
 
-1. **真实 GPU 性能采样（需本人）**：按上表口径补齐设备 / 分辨率 / DPR / 浏览器与逐 pass GPU ms；SwiftShader 数据不可引用。
-2. **作品集内容定稿（需本人）**：`ClusteredPanel` 与 `light-ssr` 条目的问题陈述 / 文案、`LightRig` 灯位与强度按场景手调、真实 GPU 目视复核、封面 GIF / hero 截图、LICENSE 选择。
-3. **SSR**：屏幕空间反射接入自建 pass 链，先复核 MSAA 下 `DepthTexture` 可采样性。
-4. **WebGPU 冒烟**：在阶段 4 前验证 `WebGPURenderer` 能否承载现有 `Pipeline`（MRT / GPU 计时的等价物）。
-5. **GI 主线**：Sponza 室内 → 烘焙 lightmap + SH 探针（probe 层按 DDGI 可复用设计）→ SSGI → DDGI；到那一步才把「GI」作为主标题。
+1. **p3-bake S1（进行中）**：`src/core/gi/bakeMath.ts` 的三处算法段由本人实现；`COEFFS_PER_PROBE`、`DEFAULT_GRID`、`CORNELL_LIGHT.emission` 待定稿。骨架已可 `npm run bake`。
+2. **S2 / S3**：运行时接入与探针可视化、`?bake=` 零回归 A/B、三个数字真值，`bake-gi` 条目 `planned → wip`。
+3. **真机会话（需本人，放收尾）**：性能采样、MSAA `DepthTexture` 探针、WebGPU 冒烟、户外热力目视、封面 GIF / hero 截图；另需定稿 `ClusteredPanel` / `light-ssr` 文案与灯位、选择 LICENSE。
+4. **SSR**：屏幕空间反射接入自建 pass 链，先复核 MSAA 下 `DepthTexture` 可采样性。
+5. **GI 后续**：Sponza 室内（与 lightmap 一并做）→ SSGI → DDGI；到那一步才把「GI」作为主标题。
 
 ## Case study
 

@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "smoke": "playwright test",
     "smoke:headed": "playwright test --headed",
-    "smoke:install": "playwright install chromium"
+    "smoke:install": "playwright install chromium",
+    "bake": "node scripts/bake-probes.ts"
   },
   "dependencies": {
     "@react-three/drei": "^10.0.0",

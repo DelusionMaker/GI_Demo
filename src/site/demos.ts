@@ -225,7 +225,7 @@ export const DEMOS: DemoMeta[] = [
   },
   {
     id: 'bake-gi',
-    title: '烘焙 Lightmap + SH 探针',
+    title: '烘焙 GI · SH 光照探针',
     oneLiner: '移动端与低配的兜底方案，价值在可预测的运行时成本而非画质上限。',
     layer: 'L2',
     stack: 'Node CLI 烘焙器 + WebGL2',
@@ -233,15 +233,30 @@ export const DEMOS: DemoMeta[] = [
     metric: '烘焙耗时 / 产物体积 / 运行时开销 三个数字',
     effort: '7–11 天',
     status: 'planned',
+    problem:
+      '实时 GI 在低端设备上无法保证稳定帧率；把间接光离线烘进世界空间探针，运行时只做一次查找与插值。难点不是「能不能照亮」，而是证明预计算结果可信、成本可预测，并诚实展示它无法响应动态光照与几何。',
     algorithm: [
-      'UV2 无重叠展开 + 半球/射线采样烘焙，可选出方向性（每像素 SH）。',
-      '探针布点后每探针烘 L1/L2 球谐系数，运行时四面体插值。',
-      '动态物体通过 SH 探针接入静态 GI。',
-      '烘焙器做成 Node CLI，产物入库、可复现、带版本号。',
+      '第一版只做 SH 光照探针：Cornell Box 程序化场景上布均匀网格（显式 spacing 常量），每探针离线烘低阶球谐系数；lightmap UV2 展开留到后续。',
+      '统一采样接口 sampleIrradiance(worldPos, normal) → vec3：静态 SH 与阶段 4 的 DDGI 图集共用同一入口，只换 backend，着色侧不感知来源；返回 E/π，不含 albedo / kD。',
+      '运行时按世界坐标做三线性插值取 8 个探针的辐照度，与直接光 / IBL 分项叠加；探针点云、SH 系数与插值权重提供调试视图。',
+      '烘焙器做成 Node CLI：固定 seed，产物入库、可复现、带版本号；?bake= 开关进 URL，关闭时逐像素零回归。',
     ],
-    formulas: ['L = Σₖ Tᵏ·Le', 'SH L1 插值：E(n) ≈ Σ cᵢ Yᵢ(n)'],
-    limitations: ['动态光照与动态几何无法响应。', '探针密度不足时出现漏光与梯度断层。'],
-    sources: [{ label: 'Lightmap 综述', href: 'https://en.wikipedia.org/wiki/Lightmap' }],
+    formulas: [
+      'E(n) ≈ Σᵢ cᵢ Yᵢ(n)（低阶 SH 投影）',
+      'sampleIrradiance(p, n) = Σₖ wₖ(p) · Eₖ(n)（8 邻域三线性权重）',
+    ],
+    limitations: [
+      '动态光照与动态几何无法响应；DDGI 只做高端增强，低端走烘焙兜底。',
+      '第一版接口不含 visibility / backface 剔除，探针密度不足或墙体两侧会出现漏光与梯度断层。',
+      '第一版跳过 lightmap UV2，只有 SH 探针，没有逐像素方向性细节。',
+      '烘焙耗时 / 产物体积 / 运行时开销按固定口径采集；GPU ms 待真机采样，SwiftShader 数据不可引用。',
+    ],
+    sources: [
+      { label: 'three.js LightProbe 文档', href: 'https://threejs.org/docs/#api/en/lights/LightProbe' },
+      { label: 'Spherical harmonics (Wikipedia)', href: 'https://en.wikipedia.org/wiki/Spherical_harmonics' },
+      { label: 'PBRT', href: 'https://pbr-book.org/' },
+      { label: 'Lightmap 综述', href: 'https://en.wikipedia.org/wiki/Lightmap' },
+    ],
   },
   {
     id: 'ssgi',

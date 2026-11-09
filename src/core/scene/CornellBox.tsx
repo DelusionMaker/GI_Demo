@@ -1,51 +1,44 @@
 import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 import { createGBufferMaterial } from '@/core/postfx/materials/GBufferMaterial'
+import {
+  CORNELL_ALBEDO,
+  CORNELL_BOXES,
+  CORNELL_LIGHT,
+  HALF_X,
+  HALF_Z,
+  ROOM_X,
+  ROOM_Y,
+  ROOM_Z,
+} from '@/core/gi/cornellData'
 
 /**
  * Cornell Box —— 按 Cornell 官方测量数据程序化搭建（1:100 缩放）。
  *
+ * 几何与材质数值**单一来源**：`src/core/gi/cornellData.ts`，
+ * 渲染侧与离线烘焙 CLI 共用，避免「烘的是 A 场景、渲染的是 B 场景」。
  * 数据来源：https://bowers.cornell.edu/computer-graphics/data
- * - 房间：552.8 × 548.8 × 559.2（x × y × z），前方（z = 0）开口
- * - 短块：约 165³，底面中心 (185.5, 0, 169.0)
- * - 高块：约 165 × 330 × 165，底面中心 (368.5, 0, 351.25)
- * - 顶灯开口：x 213..343、z 227..332（本步只建几何，发光/面光源留给 GI 阶段）
  *
  * 坐标约定（与官方数据一致，未做镜像）：
  *   相机在 z 负半轴朝 +z 看，因此世界 +x 在画面左侧、-x 在画面右侧。
- *   官方红墙在 x = 552.8（画面左侧），绿墙在 x = 0（画面右侧），
- *   与经典 Cornell Box 照片的左右关系一致。
  *
  * 材质：MRT 下所有物体都必须写满 3 个 fragment output，
  * 因此统一用 GBufferMaterial（three 内建材质只写 1 个 out，会触发
  * GL_INVALID_OPERATION 且整次 draw 被丢弃）。
  */
 
-/** 1 cm → 0.01 场景单位（房间约 5.5 单位宽，与现有相机/灯光尺度一致） */
-const S = 0.01
-
-const ROOM_X = 552.8 * S
-const ROOM_Y = 548.8 * S
-const ROOM_Z = 559.2 * S
-const HALF_X = ROOM_X / 2
-const HALF_Z = ROOM_Z / 2
-
-/** 官方数据以 x ∈ [0, 552.8]、z ∈ [0, 559.2] 建模，这里平移到房间中心 */
-const cx = (x: number) => (x - 276.4) * S
-const cz = (z: number) => (z - 279.6) * S
-
-/**
- * 线性空间反照率：shader 里 uBaseColor 直接当 albedo 用，
- * 不能传 sRGB 十六进制（THREE.Color 会再做一次 sRGB → 线性转换，画面会偏暗）。
- */
+/** 线性空间反照率：不能传 sRGB 十六进制（THREE.Color 会再做一次转换） */
 function linear(r: number, g: number, b: number): THREE.Color {
   return new THREE.Color().setRGB(r, g, b, THREE.LinearSRGBColorSpace)
 }
 
-/** 官方光谱折算到线性 RGB 的近似值（白 / 绿 / 红） */
-const WHITE = linear(0.74, 0.74, 0.74)
-const GREEN = linear(0.12, 0.45, 0.15)
-const RED = linear(0.63, 0.065, 0.05)
+const WHITE = linear(...CORNELL_ALBEDO.white)
+const GREEN = linear(...CORNELL_ALBEDO.green)
+const RED = linear(...CORNELL_ALBEDO.red)
+const LIGHT = linear(...CORNELL_ALBEDO.light)
+
+const SHORT_BLOCK = CORNELL_BOXES[0]
+const TALL_BLOCK = CORNELL_BOXES[1]
 
 export function CornellBox() {
   const materials = useMemo(
@@ -53,8 +46,8 @@ export function CornellBox() {
       white: createGBufferMaterial({ color: WHITE, roughness: 0.95, metalness: 0 }),
       green: createGBufferMaterial({ color: GREEN, roughness: 0.95, metalness: 0 }),
       red: createGBufferMaterial({ color: RED, roughness: 0.95, metalness: 0 }),
-      // 顶灯面板：当前只有几何 + 高反照率，发光/面光源在 GI 阶段实现
-      light: createGBufferMaterial({ color: linear(1, 1, 1), roughness: 1, metalness: 0 }),
+      // 顶灯面板：当前只有几何 + 高反照率；emission 由 GI 阶段在 cornellData.ts 定稿
+      light: createGBufferMaterial({ color: LIGHT, roughness: 1, metalness: 0 }),
     }),
     [],
   )
@@ -98,31 +91,34 @@ export function CornellBox() {
         <primitive object={materials.red} attach="material" />
       </mesh>
 
-      {/* 顶灯开口：与天花板共面会 z-fighting，向下偏移 0.004 */}
-      <mesh position={[cx(278), ROOM_Y - 0.004, cz(279.5)]} rotation-x={Math.PI / 2}>
-        <planeGeometry args={[130 * S, 105 * S]} />
+      {/* 顶灯：位置 / 尺寸来自 cornellData（与烘焙 CLI 同一份），向下偏移避免 z-fighting */}
+      <mesh position={[...CORNELL_LIGHT.center]} rotation-x={Math.PI / 2}>
+        <planeGeometry args={[CORNELL_LIGHT.half[0] * 2, CORNELL_LIGHT.half[2] * 2]} />
         <primitive object={materials.light} attach="material" />
       </mesh>
 
-      {/* 短块：底面中心 (185.5, 169.0)，实测约绕 y 轴 -16.6°；画面右侧、靠绿墙 */}
+      {/* 短块 / 高块：中心、尺寸、倾角来自 cornellData（与烘焙 CLI 的 OBB 同一份） */}
       <mesh
-        position={[cx(185.5), 82.5 * S, cz(169.0)]}
-        rotation-y={THREE.MathUtils.degToRad(-16.6)}
+        position={[...SHORT_BLOCK.center]}
+        rotation-y={THREE.MathUtils.degToRad(SHORT_BLOCK.yawDeg)}
         castShadow
         receiveShadow
       >
-        <boxGeometry args={[1.65, 1.65, 1.65]} />
+        <boxGeometry
+          args={[SHORT_BLOCK.half[0] * 2, SHORT_BLOCK.half[1] * 2, SHORT_BLOCK.half[2] * 2]}
+        />
         <primitive object={materials.white} attach="material" />
       </mesh>
 
-      {/* 高块：底面中心 (368.5, 351.25)，实测约绕 y 轴 +17.0°；画面左侧、靠红墙 */}
       <mesh
-        position={[cx(368.5), 165 * S, cz(351.25)]}
-        rotation-y={THREE.MathUtils.degToRad(17.0)}
+        position={[...TALL_BLOCK.center]}
+        rotation-y={THREE.MathUtils.degToRad(TALL_BLOCK.yawDeg)}
         castShadow
         receiveShadow
       >
-        <boxGeometry args={[1.65, 3.3, 1.65]} />
+        <boxGeometry
+          args={[TALL_BLOCK.half[0] * 2, TALL_BLOCK.half[1] * 2, TALL_BLOCK.half[2] * 2]}
+        />
         <primitive object={materials.white} attach="material" />
       </mesh>
     </group>
